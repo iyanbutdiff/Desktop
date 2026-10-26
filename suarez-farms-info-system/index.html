@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Suarez Farms | Coffee Shop in Naujan</title>
+    <meta
+      name="description"
+      content="Visit Suarez Farms, a cozy coffee shop in Naujan, Oriental Mindoro, with fresh air and beautiful views of Mount Halcon and the surrounding rice fields."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <div class="brand-wrap">
+          <img class="brand-mark" src="assets/suarez-farms-logo.jpg" alt="Suarez Farms profile logo" />
+          <div>
+            <p class="eyebrow">Coffee shop · Naujan</p>
+            <h1>Suarez Farms</h1>
+          </div>
+        </div>
+        <nav class="main-nav" aria-label="Main navigation">
+          <a href="#overview">Overview</a>
+          <a href="#menu">Menu &amp; order</a>
+          <a href="#gallery">Photos</a>
+          <a href="#about">About</a>
+          <a href="#contact">Visit</a>
+        </nav>
+        <div class="top-actions">
+          <button id="account-button" class="secondary-btn" type="button">Sign in / Register</button>
+          <button id="logout-button" class="secondary-btn" type="button" hidden>Sign out</button>
+          <a class="secondary-btn header-icon-link facebook-icon-link" href="https://web.facebook.com/SuarezFarms" target="_blank" rel="noreferrer" aria-label="Visit Suarez Farms on Facebook" title="Facebook">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M13.4 21v-8h2.7l.4-3.1h-3.1v-2c0-.9.3-1.5 1.6-1.5h1.6V3.6c-.3 0-1.3-.1-2.4-.1-2.4 0-4 1.5-4 4.1v2.3H7.5V13h2.7v8z" /></svg>
+          </a>
+          <a class="primary-btn header-icon-link phone-icon-link" href="tel:+639989877203" aria-label="Call Suarez Farms at 0998 987 7203" title="Call Suarez Farms">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.6 2.8 9.4 2c.7-.2 1.4.2 1.6.9l1 3.5c.2.6 0 1.2-.5 1.6l-1.8 1.4a14.2 14.2 0 0 0 4.9 4.9l1.4-1.8c.4-.5 1-.7 1.6-.5l3.5 1c.7.2 1.1.9.9 1.6l-.8 2.8c-.2.7-.8 1.1-1.5 1.1C10.7 18.5 5.5 13.3 5.5 4.3c0-.7.4-1.3 1.1-1.5Z" /></svg>
+          </a>
+        </div>
+      </header>
+
+      <main>
+        <section id="overview" class="hero">
+          <div class="hero-copy">
+            <span class="status-pill">A cozy coffee shop in Naujan</span>
+            <h2>Good coffee, fresh air, and a view worth slowing down for.</h2>
+            <p>
+              Take a break at Suarez Farms, a cozy café with a relaxing countryside
+              atmosphere and breathtaking views of Mount Halcon and the rice fields
+              of Oriental Mindoro.
+            </p>
+            <div class="cta-row">
+              <a class="primary-btn" href="https://maps.google.com/?q=Suarez+Farms+Naujan+Municipal+Road+Naujan+Oriental+Mindoro" target="_blank" rel="noreferrer">Get directions</a>
+              <a class="secondary-btn" href="tel:+639989877203">Call 0998 987 7203</a>
+            </div>
+            <ul class="info-list">
+              <li><span>Address</span><strong>Naujan Municipal Road, Naujan, 5204</strong></li>
+              <li><span>Phone</span><strong>0998 987 7203</strong></li>
+              <li><span>Email</span><strong>suarezfarms.agri@gmail.com</strong></li>
+            </ul>
+          </div>
+
+          <div class="experience-card">
+            <p class="eyebrow">The Suarez Farms experience</p>
+            <h3>A café escape surrounded by nature</h3>
+            <ul>
+              <li>Coffee shop in Naujan, Oriental Mindoro</li>
+              <li>Fresh air and a relaxed atmosphere</li>
+              
+            </ul>
+            <a href="https://web.facebook.com/SuarezFarms" target="_blank" rel="noreferrer">See the latest on Facebook →</a>
+          </div>
+        </section>
+
+        <section id="menu" class="ordering-section">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Made fresh at Suarez Farms</p>
+              <h3>Menu &amp; online orders</h3>
+            </div>
+            <p class="order-note">Create a customer account to place an order. GCash is required.</p>
+          </div>
+          <p id="store-message" class="notice" role="status" aria-live="polite"></p>
+          <div class="menu-boards-heading">
+            <div>
+              <h4>Browse the café menu</h4>
+              <p>Explore the current menu boards and prices. Sign in to order available items online.</p>
+            </div>
+          </div>
+          <div id="menu-boards" class="menu-boards" aria-label="Suarez Farms menu boards">
+            <a class="menu-board" href="assets/menu/fried-chicken.jpg" target="_blank" rel="noreferrer">
+              <img src="assets/menu/fried-chicken.jpg" alt="Suarez Farms fried chicken menu and prices" loading="lazy" />
+              <span>Fried chicken</span>
+            </a>
+            <a class="menu-board" href="assets/menu/soda-and-juices.jpg" target="_blank" rel="noreferrer">
+              <img src="assets/menu/soda-and-juices.jpg" alt="Suarez Farms soda and juices menu and prices" loading="lazy" />
+              <span>Soda &amp; juices</span>
+            </a>
+            <a class="menu-board" href="assets/menu/desserts.jpg" target="_blank" rel="noreferrer">
+              <img src="assets/menu/desserts.jpg" alt="Suarez Farms desserts menu and prices" loading="lazy" />
+              <span>Desserts</span>
+            </a>
+            <a class="menu-board" href="assets/menu/pasta.jpg" target="_blank" rel="noreferrer">
+              <img src="assets/menu/pasta.jpg" alt="Suarez Farms pasta menu and prices" loading="lazy" />
+              <span>Pasta</span>
+            </a>
+            <a class="menu-board" href="assets/menu/coffee-tea-and-matcha.jpg" target="_blank" rel="noreferrer">
+              <img src="assets/menu/coffee-tea-and-matcha.jpg" alt="Suarez Farms coffee, tea and matcha menu and prices" loading="lazy" />
+              <span>Coffee, tea &amp; matcha</span>
+            </a>
+            <a class="menu-board" href="assets/menu/kimchi-series.jpg" target="_blank" rel="noreferrer">
+              <img src="assets/menu/kimchi-series.jpg" alt="Suarez Farms kimchi series menu and prices" loading="lazy" />
+              <span>Kimchi series</span>
+            </a>
+            <a class="menu-board" href="assets/menu/sisig-rice-meals.jpg" target="_blank" rel="noreferrer">
+              <img src="assets/menu/sisig-rice-meals.jpg" alt="Suarez Farms sisig rice meals menu and prices" loading="lazy" />
+              <span>Sisig rice meals</span>
+            </a>
+            <a class="menu-board" href="assets/menu/appetizers.jpg" target="_blank" rel="noreferrer">
+              <img src="assets/menu/appetizers.jpg" alt="Suarez Farms appetizers menu and prices" loading="lazy" />
+              <span>Appetizers</span>
+            </a>
+            <a class="menu-board" href="assets/menu/rice-meal-specials.jpg" target="_blank" rel="noreferrer">
+              <img src="assets/menu/rice-meal-specials.jpg" alt="Suarez Farms rice meal specials and prices" loading="lazy" />
+              <span>Rice meal specials</span>
+            </a>
+          </div>
+          <div class="store-layout">
+            <div id="menu-grid" class="menu-grid" aria-live="polite"></div>
+            <aside class="cart-panel" aria-labelledby="cart-title">
+              <h4 id="cart-title">Your order</h4>
+              <div id="cart-items" class="cart-items"></div>
+              <p class="cart-total"><span>Total</span><strong id="cart-total">₱0.00</strong></p>
+              <form id="checkout-form">
+                <fieldset class="payment-choice">
+                  <legend>Required payment method</legend>
+                  <label><input type="radio" name="paymentMethod" value="gcash" required checked /> GCash</label>
+                  <p>Payment instructions will be provided by the shop when your order is confirmed.</p>
+                </fieldset>
+                <label class="field-label" for="gcash-reference">GCash reference (if already paid)</label>
+                <input id="gcash-reference" name="gcashReference" type="text" maxlength="80" placeholder="Optional transaction reference" />
+                <button class="primary-btn checkout-button" type="submit">Place GCash order</button>
+              </form>
+            </aside>
+          </div>
+        </section>
+
+        <section id="order-history" class="admin-section" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Customer account</p>
+              <h3>Your recent orders</h3>
+            </div>
+          </div>
+          <div id="customer-orders" class="order-list"></div>
+        </section>
+
+        <section id="admin-dashboard" class="admin-section" hidden>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Admin workspace</p>
+              <h3>Manage menu &amp; orders</h3>
+            </div>
+          </div>
+          <div class="admin-layout">
+            <section class="panel">
+              <h4 id="menu-form-title">Add a menu item</h4>
+              <form id="menu-form" class="menu-form">
+                <input id="menu-item-id" type="hidden" />
+                <label class="field-label" for="menu-name">Item name</label>
+                <input id="menu-name" name="name" type="text" maxlength="80" required />
+                <label class="field-label" for="menu-description">Description</label>
+                <textarea id="menu-description" name="description" maxlength="240" rows="3"></textarea>
+                <label class="field-label" for="menu-price">Price (₱)</label>
+                <input id="menu-price" name="price" type="number" min="0.01" max="100000" step="0.01" required />
+                <label class="field-label" for="menu-photo">Item photo</label>
+                <input id="menu-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" />
+                <p class="upload-help">JPG, PNG or WebP · up to 5 MB. Optional.</p>
+                <img id="menu-photo-preview" class="menu-photo-preview" alt="Menu item photo preview" hidden />
+                <label id="remove-photo-label" class="checkbox-label" hidden>
+                  <input id="remove-menu-photo" type="checkbox" /> Remove current photo
+                </label>
+                <label class="checkbox-label"><input id="menu-available" type="checkbox" checked /> Available to order</label>
+                <div class="form-actions">
+                  <button class="primary-btn" type="submit">Save menu item</button>
+                  <button id="cancel-menu-edit" class="secondary-btn" type="button" hidden>Cancel edit</button>
+                </div>
+              </form>
+              <h4 class="subheading">Current menu</h4>
+              <div id="admin-menu-list" class="admin-menu-list"></div>
+            </section>
+            <section class="panel">
+              <h4>Incoming orders</h4>
+              <p class="muted-copy">Review GCash references, confirm payments, and update order progress.</p>
+              <div id="admin-orders" class="order-list"></div>
+            </section>
+          </div>
+        </section>
+
+        <section id="gallery" class="gallery" aria-label="Suarez Farms photos">
+          <div class="section-heading">
+            <h3>Get a glimpse of Suarez Farms</h3>
+            <a class="ghost-btn" href="https://web.facebook.com/SuarezFarms/photos" target="_blank" rel="noreferrer">More photos on Facebook</a>
+          </div>
+          <div class="gallery-grid">
+            <a class="photo-card" href="https://web.facebook.com/photo/?fbid=1138117534996410&amp;set=a.585116603629842" target="_blank" rel="noreferrer">
+              <img src="assets/suarez-farms-1.jpg" alt="Suarez Farms café, photo from its Facebook profile" />
+            </a>
+            <a class="photo-card" href="https://web.facebook.com/photo/?fbid=1624659736342185&amp;set=pb.100063945223416.-2207520000" target="_blank" rel="noreferrer">
+              <img src="assets/suarez-farms-3.jpg" alt="Suarez Farms cinnamon honey oat latte, shown in a cup and mug" loading="lazy" />
+            </a>
+            <a class="photo-card" href="https://web.facebook.com/photo/?fbid=1624656733009152&amp;set=pb.100063945223416.-2207520000" target="_blank" rel="noreferrer">
+              <img src="assets/suarez-farms-4.jpg" alt="Suarez Farms signature green iced drink with cream" loading="lazy" />
+            </a>
+          </div>
+        </section>
+
+        <section id="about" class="info-panels">
+          <div class="panel about-panel">
+            <div class="section-heading narrow">
+              <h3>About</h3>
+            </div>
+            <p>
+              Suarez Farms is a cozy café in Naujan, Oriental Mindoro, made for
+              slowing down, enjoying coffee, and taking in the fresh countryside air.
+            </p>
+            <p>
+              The café's Facebook profile describes a breathtaking view of Mount
+              Halcon framed by the rice fields of Oriental Mindoro.
+            </p>
+          </div>
+
+          <div id="contact" class="panel contact-panel">
+            <div class="section-heading narrow">
+              <h3>Plan your visit</h3>
+            </div>
+            <ul class="contact-list">
+              <li>
+                <span class="label">Address</span>
+                <strong>Naujan Municipal Road, Naujan, 5204 Naujan, Philippines</strong>
+              </li>
+              <li>
+                <span class="label">Hours</span>
+                <a href="https://web.facebook.com/SuarezFarms" target="_blank" rel="noreferrer">Check current hours on Facebook</a>
+              </li>
+              <li>
+                <span class="label">Email</span>
+                <a href="mailto:suarezfarms.agri@gmail.com">suarezfarms.agri@gmail.com</a>
+              </li>
+              <li>
+                <span class="label">Phone</span>
+                <a href="tel:+639989877203">0998 987 7203</a>
+              </li>
+              <li>
+                <span class="label">Facebook</span>
+                <a href="https://web.facebook.com/SuarezFarms" target="_blank" rel="noreferrer">Suarez Farms on Facebook</a>
+              </li>
+            </ul>
+          </div>
+        </section>
+
+      </main>
+
+      <footer class="site-footer">
+        <p>© <span id="year"></span> Suarez Farms · <a href="https://web.facebook.com/SuarezFarms" target="_blank" rel="noreferrer">Photos and profile details from Facebook</a></p>
+      </footer>
+    </div>
+
+    <dialog id="auth-dialog" class="auth-dialog" aria-labelledby="auth-title">
+      <div class="auth-dialog-content">
+        <button id="auth-close" class="dialog-close" type="button" aria-label="Close sign in">×</button>
+        <p class="eyebrow">Suarez Farms ordering</p>
+        <h2 id="auth-title">Sign in</h2>
+        <div class="auth-role-switch" aria-label="Choose account type">
+          <button class="auth-role active" type="button" data-role="customer">Customer</button>
+          <button class="auth-role" type="button" data-role="admin">Admin</button>
+        </div>
+        <button id="register-toggle" class="text-button" type="button">New here? Create a customer account</button>
+        <form id="auth-form" class="auth-form">
+          <label id="name-label" class="field-label" for="auth-name" hidden>Your name</label>
+          <input id="auth-name" name="name" type="text" maxlength="80" autocomplete="name" placeholder="Your name" hidden />
+          <label id="email-label" class="field-label" for="auth-email">Email</label>
+          <input id="auth-email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="you@example.com" required />
+          <label id="username-label" class="field-label" for="auth-username" hidden>Admin username</label>
+          <input id="auth-username" name="username" type="text" autocomplete="username" placeholder="Admin username" hidden />
+          <label class="field-label" for="auth-password">Password</label>
+          <input id="auth-password" name="password" type="password" maxlength="128" autocomplete="current-password" required />
+          <button class="primary-btn auth-submit" type="submit">Sign in</button>
+        </form>
+        <p id="auth-message" class="notice" role="alert" aria-live="polite"></p>
+      </div>
+    </dialog>
+
+    <script src="script.js"></script>
+  </body>
+</html>
