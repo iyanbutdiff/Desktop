@@ -3,29 +3,57 @@ document.addEventListener("DOMContentLoaded", () => {
   if (yearEl) yearEl.textContent = new Date().getFullYear();
 
   const authDialog = document.getElementById("auth-dialog");
+  const orderConfirmationDialog = document.getElementById("order-confirmation-dialog");
+  const orderConfirmationMessage = document.getElementById("order-confirmation-message");
   const authForm = document.getElementById("auth-form");
   const authMessage = document.getElementById("auth-message");
   const accountButton = document.getElementById("account-button");
   const logoutButton = document.getElementById("logout-button");
   const registerToggle = document.getElementById("register-toggle");
   const storeMessage = document.getElementById("store-message");
+  const menuCategories = document.getElementById("menu-categories");
   const menuGrid = document.getElementById("menu-grid");
   const cartItems = document.getElementById("cart-items");
   const cartTotal = document.getElementById("cart-total");
+  const cartCount = document.getElementById("cart-count");
   const checkoutForm = document.getElementById("checkout-form");
+  const checkoutButton = checkoutForm.querySelector(".checkout-button");
+  const checkoutHelp = document.getElementById("checkout-help");
   const adminDashboard = document.getElementById("admin-dashboard");
   const orderHistory = document.getElementById("order-history");
   const menuForm = document.getElementById("menu-form");
+  const menuCategorySelect = document.getElementById("menu-category");
+  const newCategoryLabel = document.getElementById("menu-new-category-label");
+  const newCategoryInput = document.getElementById("menu-new-category");
   const adminMenuList = document.getElementById("admin-menu-list");
   const adminOrders = document.getElementById("admin-orders");
   const menuPhotoInput = document.getElementById("menu-photo");
   const menuPhotoPreview = document.getElementById("menu-photo-preview");
+  const menuPhotoPlaceholder = document.getElementById("menu-photo-placeholder");
   const removePhotoLabel = document.getElementById("remove-photo-label");
   const removeMenuPhoto = document.getElementById("remove-menu-photo");
 
   let currentUser = null;
   let menu = [];
   let cart = new Map();
+  let checkoutPendingAuthentication = false;
+  let placingOrder = false;
+  let selectedCategory = null;
+  let selectedSubcategory = "All items";
+  let adminCategories = [];
+  const menuCategoryOrder = [
+    "Coffee",
+    "Frappe",
+    "Rice Meals",
+    "Fried Chicken",
+    "Milk Drinks",
+    "Matcha & Tea",
+    "Soda & Juices",
+    "Desserts",
+    "Pasta",
+    "Kimchi Series",
+    "Appetizers",
+  ];
   let authRole = "customer";
   let isRegistering = false;
   let existingPhotoUrl = null;
@@ -109,6 +137,8 @@ document.addEventListener("DOMContentLoaded", () => {
       logoutButton.hidden = true;
       adminDashboard.hidden = true;
       orderHistory.hidden = true;
+      checkoutButton.textContent = "Sign in to place order";
+      checkoutHelp.textContent = "Sign in or create a customer account to send your order. Your cart will be kept.";
       return;
     }
 
@@ -117,6 +147,12 @@ document.addEventListener("DOMContentLoaded", () => {
     logoutButton.textContent = `Sign out (${currentUser.name})`;
     adminDashboard.hidden = currentUser.role !== "admin";
     orderHistory.hidden = currentUser.role !== "customer";
+    checkoutButton.textContent = currentUser.role === "customer"
+      ? "Place GCash order"
+      : "Sign in as a customer to order";
+    checkoutHelp.textContent = currentUser.role === "customer"
+      ? "Your order will be sent to Suarez Farms when you place it."
+      : "Customer accounts are required to place an order.";
     if (currentUser.role === "admin") {
       loadAdminData().catch((error) => showStoreMessage(error.message, true));
     } else {
@@ -126,23 +162,85 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function renderMenu() {
     if (!menu.length) {
+      menuCategories.hidden = true;
       menuGrid.innerHTML = `<p class="empty-state">Our online menu is being prepared. Check back soon or contact the café directly.</p>`;
       return;
     }
 
-    menuGrid.innerHTML = menu.map((item) => `
-      <article class="menu-card">
-        ${item.photoUrl ? `<img class="menu-item-photo" src="${escapeHtml(item.photoUrl)}" alt="${escapeHtml(item.name)}" loading="lazy" />` : ""}
-        <div>
-          <h4>${escapeHtml(item.name)}</h4>
-          <p>${escapeHtml(item.description || "Freshly prepared at Suarez Farms.")}</p>
+    const categories = [...new Set(menu.map((item) => item.category || "Other"))]
+      .sort((left, right) => {
+        const leftIndex = menuCategoryOrder.indexOf(left);
+        const rightIndex = menuCategoryOrder.indexOf(right);
+        if (leftIndex < 0 && rightIndex < 0) return left.localeCompare(right);
+        if (leftIndex < 0) return 1;
+        if (rightIndex < 0) return -1;
+        return leftIndex - rightIndex;
+      });
+    if (!categories.includes(selectedCategory)) selectedCategory = categories[0];
+    const items = menu.filter((item) =>
+      (item.category || "Other") === selectedCategory,
+    );
+    const subcategories = [...new Set(items.map((item) => item.subcategory).filter(Boolean))];
+    const subcategoryOptions = ["All items", ...subcategories];
+    if (!subcategoryOptions.includes(selectedSubcategory)) selectedSubcategory = "All items";
+    menuCategories.hidden = false;
+    menuCategories.innerHTML = categories.map((category) => {
+      const count = menu.filter((item) =>
+        (item.category || "Other") === category,
+      ).length;
+      return `
+        <button class="menu-category-button${category === selectedCategory ? " active" : ""}" type="button" data-category="${escapeHtml(category)}" aria-pressed="${category === selectedCategory}">
+          <span>${escapeHtml(category)}</span>
+          <span class="menu-category-count">${count}</span>
+        </button>
+      `;
+    }
+    ).join("");
+    const visibleItems = selectedSubcategory === "All items"
+      ? items
+      : items.filter((item) => item.subcategory === selectedSubcategory);
+    const renderItems = (groupItems) => groupItems.map((item) => {
+      const photoAltText = item.photoAltText || item.name;
+      const itemPhoto = item.photoUrl
+        ? `<img class="menu-item-photo" src="${escapeHtml(item.photoUrl)}" alt="${escapeHtml(photoAltText)}" loading="lazy" />`
+        : `<span class="menu-item-photo-fallback" role="img" aria-label="${escapeHtml(photoAltText)}"><span>Photo coming soon</span><strong>${escapeHtml(photoAltText)}</strong></span>`;
+      return `
+        <button class="menu-card add-to-cart" type="button" data-item-id="${escapeHtml(item.id)}" aria-label="Add ${escapeHtml(item.name)} to your order for ${money(item.price)}">
+          <span class="menu-item-image-wrap">
+            ${itemPhoto}
+            <strong class="menu-price-badge">${money(item.price)}</strong>
+          </span>
+          <span class="menu-card-details">
+            <span class="menu-item-name">${escapeHtml(item.name)}</span>
+            <span class="menu-item-description">${escapeHtml(item.description || "Freshly prepared at Suarez Farms.")}</span>
+            <span class="menu-card-footer">
+              <span class="menu-card-action">Add to order <span aria-hidden="true">+</span></span>
+            </span>
+          </span>
+        </button>
+      `;
+    }).join("");
+    menuGrid.innerHTML = `
+      <section class="menu-category" aria-labelledby="menu-category-title">
+        <div class="menu-category-heading">
+          <div>
+            <p class="eyebrow">Browse menu</p>
+            <h4 id="menu-category-title">${escapeHtml(selectedCategory)}</h4>
+          </div>
+          <span>${visibleItems.length} ${visibleItems.length === 1 ? "item" : "items"}</span>
         </div>
-        <div class="menu-card-footer">
-          <strong>${money(item.price)}</strong>
-          <button class="primary-btn add-to-cart" type="button" data-item-id="${escapeHtml(item.id)}">Add to order</button>
+        <nav class="menu-subcategories" aria-label="${escapeHtml(selectedCategory)} subcategories">
+          ${subcategoryOptions.map((subcategory) => `
+            <button class="menu-subcategory-button${subcategory === selectedSubcategory ? " active" : ""}" type="button" data-subcategory="${escapeHtml(subcategory)}" aria-pressed="${subcategory === selectedSubcategory}">
+              ${escapeHtml(subcategory)}
+            </button>
+          `).join("")}
+        </nav>
+        <div class="menu-category-items">
+          ${renderItems(visibleItems)}
         </div>
-      </article>
-    `).join("");
+      </section>
+    `;
   }
 
   function renderCart() {
@@ -157,6 +255,7 @@ document.addEventListener("DOMContentLoaded", () => {
           <div class="cart-row">
             <div>
               <strong>${escapeHtml(item.name)}</strong>
+              ${item.description ? `<span>${escapeHtml(item.description)}</span>` : ""}
               <span>${money(item.price)} each</span>
             </div>
             <div class="quantity-controls">
@@ -168,12 +267,27 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
       }).join("");
     }
-    const total = entries.reduce((sum, [id, quantity]) => {
+    const totalInCents = entries.reduce((sum, [id, quantity]) => {
       const item = menu.find((candidate) => candidate.id === id);
-      return sum + (item ? item.price * quantity : 0);
+      return sum + (item ? Math.round(item.price * 100) * quantity : 0);
     }, 0);
-    cartTotal.textContent = money(total);
+    const totalItems = entries.reduce((sum, [, quantity]) => sum + quantity, 0);
+    cartCount.textContent = `${totalItems} ${totalItems === 1 ? "item" : "items"}`;
+    cartTotal.textContent = money(totalInCents / 100);
     checkoutForm.querySelector(".checkout-button").disabled = entries.length === 0;
+  }
+
+  function addToCart(id) {
+    const item = menu.find((candidate) => candidate.id === id);
+    if (!item) return;
+    const quantity = cart.get(id) || 0;
+    if (quantity >= 20) {
+      showStoreMessage("You can order up to 20 of each item.", true);
+      return;
+    }
+    cart.set(id, quantity + 1);
+    renderCart();
+    showStoreMessage(`${item.name} added to your order.`);
   }
 
   async function loadMenu() {
@@ -186,6 +300,22 @@ document.addEventListener("DOMContentLoaded", () => {
     renderCart();
   }
 
+  function renderAdminCategories(selectedCategory = "") {
+    menuCategorySelect.innerHTML = `
+      <option value="">Select a category</option>
+      ${adminCategories.map((category) =>
+        `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`,
+      ).join("")}
+      <option value="__new__">Create a new category...</option>
+    `;
+    menuCategorySelect.value = selectedCategory;
+    const creatingCategory = selectedCategory === "__new__";
+    newCategoryLabel.hidden = !creatingCategory;
+    newCategoryInput.hidden = !creatingCategory;
+    newCategoryInput.required = creatingCategory;
+    if (!creatingCategory) newCategoryInput.value = "";
+  }
+
   function renderAdminMenu(items) {
     if (!items.length) {
       adminMenuList.innerHTML = `<p class="empty-state">No menu items yet. Add your first item above.</p>`;
@@ -193,10 +323,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     adminMenuList.innerHTML = items.map((item) => `
       <article class="admin-menu-row">
-        ${item.photoUrl ? `<img class="admin-menu-photo" src="${escapeHtml(item.photoUrl)}" alt="" loading="lazy" />` : ""}
+        ${item.photoUrl ? `<img class="admin-menu-photo" src="${escapeHtml(item.photoUrl)}" alt="${escapeHtml(item.photoAltText || item.name)}" loading="lazy" />` : ""}
         <div>
           <strong>${escapeHtml(item.name)}</strong>
-          <span>${money(item.price)} · ${item.available ? "Available" : "Unavailable"}</span>
+          <span>${escapeHtml(item.category || "Other")}${item.subcategory ? ` · ${escapeHtml(item.subcategory)}` : ""} · ${money(item.price)} · ${item.available ? "Available" : "Unavailable"}</span>
         </div>
         <div class="form-actions">
           <button class="secondary-btn edit-menu-item" type="button" data-item-id="${escapeHtml(item.id)}">Edit</button>
@@ -216,7 +346,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function renderOrder(order, adminView) {
     const lines = order.items.map((item) =>
-      `<li>${escapeHtml(item.name)} × ${item.quantity} — ${money(item.unitPrice * item.quantity)}</li>`,
+      `<li>${escapeHtml(item.name)} × ${item.quantity} — ${money(item.unitPrice * item.quantity)}${item.description ? `<span class="order-item-description">${escapeHtml(item.description)}</span>` : ""}</li>`,
     ).join("");
     const reference = order.gcashReference
       ? escapeHtml(order.gcashReference)
@@ -252,13 +382,23 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function loadAdminData() {
-    const [menuResult, orderResult] = await Promise.all([
+    const [menuResult, orderResult, categoryResult] = await Promise.all([
       api("/api/admin/menu"),
       api("/api/admin/orders"),
+      api("/api/admin/categories"),
     ]);
+    adminCategories = categoryResult.categories;
+    renderAdminCategories(menuCategorySelect.value);
     renderAdminMenu(menuResult.menu);
     adminOrders.innerHTML = orderResult.orders.length
       ? orderResult.orders.map((order) => renderOrder(order, true)).join("")
+      : `<p class="empty-state">No orders received yet.</p>`;
+  }
+
+  async function loadAdminOrders() {
+    const result = await api("/api/admin/orders");
+    adminOrders.innerHTML = result.orders.length
+      ? result.orders.map((order) => renderOrder(order, true)).join("")
       : `<p class="empty-state">No orders received yet.</p>`;
   }
 
@@ -285,6 +425,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
   accountButton.addEventListener("click", () => openAuth());
   document.getElementById("auth-close").addEventListener("click", () => authDialog.close());
+  document.getElementById("order-confirmation-close").addEventListener("click", () =>
+    orderConfirmationDialog.close(),
+  );
+  authDialog.addEventListener("close", () => {
+    if (currentUser?.role !== "customer") checkoutPendingAuthentication = false;
+  });
   authDialog.addEventListener("click", (event) => {
     if (event.target === authDialog) authDialog.close();
   });
@@ -315,6 +461,12 @@ document.addEventListener("DOMContentLoaded", () => {
       currentUser = result.user;
       authDialog.close();
       updateAccountDisplay();
+      if (checkoutPendingAuthentication && currentUser.role === "customer") {
+        checkoutPendingAuthentication = false;
+        await placeCustomerOrder();
+        return;
+      }
+      checkoutPendingAuthentication = false;
       showStoreMessage(`Welcome, ${currentUser.name}.`);
     } catch (error) {
       authMessage.textContent = error.message;
@@ -334,16 +486,26 @@ document.addEventListener("DOMContentLoaded", () => {
 
   menuGrid.addEventListener("click", (event) => {
     const button = event.target.closest(".add-to-cart");
-    if (!button) return;
-    const id = button.dataset.itemId;
-    const quantity = cart.get(id) || 0;
-    if (quantity >= 20) {
-      showStoreMessage("You can order up to 20 of each item.", true);
-      return;
-    }
-    cart.set(id, quantity + 1);
-    renderCart();
-    showStoreMessage(`${menu.find((item) => item.id === id).name} added to your order.`);
+    if (button) addToCart(button.dataset.itemId);
+  });
+
+  menuCategorySelect.addEventListener("change", () =>
+    renderAdminCategories(menuCategorySelect.value),
+  );
+
+  menuCategories.addEventListener("click", (event) => {
+    const button = event.target.closest(".menu-category-button");
+    if (!button || button.dataset.category === selectedCategory) return;
+    selectedCategory = button.dataset.category;
+    selectedSubcategory = "All items";
+    renderMenu();
+  });
+
+  menuGrid.addEventListener("click", (event) => {
+    const button = event.target.closest(".menu-subcategory-button");
+    if (!button || button.dataset.subcategory === selectedSubcategory) return;
+    selectedSubcategory = button.dataset.subcategory;
+    renderMenu();
   });
 
   cartItems.addEventListener("click", (event) => {
@@ -361,11 +523,10 @@ document.addEventListener("DOMContentLoaded", () => {
     renderCart();
   });
 
-  checkoutForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
+  async function placeCustomerOrder() {
+    if (placingOrder) return;
     if (!currentUser || currentUser.role !== "customer") {
-      openAuth("customer", true);
-      authMessage.textContent = "Create a customer account or sign in before ordering.";
+      showStoreMessage("Sign in with a customer account to place your order.", true);
       return;
     }
     if (!checkoutForm.elements.paymentMethod.value) {
@@ -374,6 +535,9 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const items = [...cart.entries()].map(([id, quantity]) => ({ id, quantity }));
+    placingOrder = true;
+    checkoutButton.disabled = true;
+    checkoutButton.textContent = "Sending your order...";
     try {
       const result = await api("/api/orders", {
         method: "POST",
@@ -386,14 +550,40 @@ document.addEventListener("DOMContentLoaded", () => {
       cart.clear();
       document.getElementById("gcash-reference").value = "";
       renderCart();
-      showStoreMessage(
-        `Order #${result.order.id} received. The shop will provide GCash payment instructions and confirm your order.`,
+      showStoreMessage();
+      orderConfirmationMessage.textContent =
+        `Order #${result.order.id} has been sent to Suarez Farms. The shop will confirm it shortly.`;
+      orderConfirmationDialog.showModal();
+      loadCustomerOrders().catch((error) =>
+        showStoreMessage(`Order #${result.order.id} was placed, but order history could not be refreshed: ${error.message}`, true),
       );
-      await loadCustomerOrders();
     } catch (error) {
       showStoreMessage(error.message, true);
-      if (error.message.includes("sign in")) openAuth();
+      if (error.message.includes("sign in")) {
+        checkoutPendingAuthentication = true;
+        openAuth("customer", false);
+        authMessage.textContent = "Your cart is ready. Sign in to send this order.";
+      }
+    } finally {
+      placingOrder = false;
+      checkoutButton.textContent = currentUser?.role === "customer"
+        ? "Place GCash order"
+        : currentUser ? "Sign in as a customer to order" : "Sign in to place order";
+      checkoutButton.disabled = cart.size === 0;
     }
+  }
+
+  checkoutForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!currentUser || currentUser.role !== "customer") {
+      checkoutPendingAuthentication = true;
+      openAuth("customer", !currentUser);
+      authMessage.textContent = currentUser
+        ? "Sign in with a customer account to send your order."
+        : "Create a customer account or sign in to send your order. Your cart will be kept.";
+      return;
+    }
+    await placeCustomerOrder();
   });
 
   menuForm.addEventListener("submit", async (event) => {
@@ -404,14 +594,32 @@ document.addEventListener("DOMContentLoaded", () => {
       showStoreMessage("Menu photos must be no larger than 5 MB.", true);
       return;
     }
-    const payload = {
-      name: document.getElementById("menu-name").value.trim(),
-      description: document.getElementById("menu-description").value.trim(),
-      price: Number(document.getElementById("menu-price").value),
-      available: document.getElementById("menu-available").checked,
-      removePhoto: removeMenuPhoto.checked,
-    };
+    let category = menuCategorySelect.value;
     try {
+      if (category === "__new__") {
+        const categoryResult = await api("/api/admin/categories", {
+          method: "POST",
+          body: JSON.stringify({ name: newCategoryInput.value.trim() }),
+        });
+        category = categoryResult.category;
+        if (!adminCategories.some((existing) =>
+          existing.toLocaleLowerCase() === category.toLocaleLowerCase(),
+        )) {
+          adminCategories.push(category);
+        }
+        renderAdminCategories(category);
+      }
+      const name = document.getElementById("menu-name").value.trim();
+      const payload = {
+        name,
+        category,
+        subcategory: document.getElementById("menu-subcategory").value.trim(),
+        description: document.getElementById("menu-description").value.trim(),
+        photoAltText: document.getElementById("menu-photo-alt-text").value.trim() || name,
+        price: Number(document.getElementById("menu-price").value),
+        available: document.getElementById("menu-available").checked,
+        removePhoto: removeMenuPhoto.checked,
+      };
       if (selectedPhoto) {
         payload.photo = await new Promise((resolve, reject) => {
           const reader = new FileReader();
@@ -445,11 +653,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function resetMenuForm() {
     menuForm.reset();
+    renderAdminCategories();
     existingPhotoUrl = null;
     if (photoPreviewUrl) URL.revokeObjectURL(photoPreviewUrl);
     photoPreviewUrl = null;
     menuPhotoPreview.hidden = true;
     menuPhotoPreview.removeAttribute("src");
+    menuPhotoPlaceholder.hidden = false;
     removePhotoLabel.hidden = true;
     document.getElementById("menu-item-id").value = "";
     document.getElementById("menu-available").checked = true;
@@ -464,6 +674,7 @@ document.addEventListener("DOMContentLoaded", () => {
       photoPreviewUrl = null;
       menuPhotoPreview.src = existingPhotoUrl || "";
       menuPhotoPreview.hidden = !existingPhotoUrl;
+      menuPhotoPlaceholder.hidden = Boolean(existingPhotoUrl);
       return;
     }
     if (selectedPhoto.size > 5 * 1024 * 1024) {
@@ -475,6 +686,7 @@ document.addEventListener("DOMContentLoaded", () => {
     photoPreviewUrl = URL.createObjectURL(selectedPhoto);
     menuPhotoPreview.src = photoPreviewUrl;
     menuPhotoPreview.hidden = false;
+    menuPhotoPlaceholder.hidden = true;
     removeMenuPhoto.checked = false;
   });
 
@@ -482,9 +694,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (removeMenuPhoto.checked) {
       menuPhotoInput.value = "";
       menuPhotoPreview.hidden = true;
+      menuPhotoPlaceholder.hidden = false;
     } else if (existingPhotoUrl) {
       menuPhotoPreview.src = existingPhotoUrl;
       menuPhotoPreview.hidden = false;
+      menuPhotoPlaceholder.hidden = true;
     }
   });
 
@@ -504,12 +718,16 @@ document.addEventListener("DOMContentLoaded", () => {
       menuPhotoInput.value = "";
       document.getElementById("menu-item-id").value = item.id;
       document.getElementById("menu-name").value = item.name;
+      renderAdminCategories(item.category || "Other");
+      document.getElementById("menu-subcategory").value = item.subcategory || "";
       document.getElementById("menu-description").value = item.description;
+      document.getElementById("menu-photo-alt-text").value = item.photoAltText || item.name;
       document.getElementById("menu-price").value = item.price;
       document.getElementById("menu-available").checked = item.available;
       existingPhotoUrl = item.photoUrl;
       menuPhotoPreview.src = item.photoUrl || "";
       menuPhotoPreview.hidden = !item.photoUrl;
+      menuPhotoPlaceholder.hidden = Boolean(item.photoUrl);
       removePhotoLabel.hidden = !item.photoUrl;
       removeMenuPhoto.checked = false;
       document.getElementById("menu-form-title").textContent = "Edit menu item";
@@ -552,4 +770,9 @@ document.addEventListener("DOMContentLoaded", () => {
   Promise.all([loadMenu(), refreshSession()]).catch((error) => {
     showStoreMessage(`Ordering service unavailable: ${error.message}`, true);
   });
+
+  window.setInterval(() => {
+    if (currentUser?.role !== "admin" || adminDashboard.hidden) return;
+    loadAdminOrders().catch((error) => showStoreMessage(error.message, true));
+  }, 10000);
 });

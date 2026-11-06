@@ -6,12 +6,16 @@ const {
   scryptSync,
   timingSafeEqual,
 } = require("node:crypto");
+const { DatabaseSync } = require("node:sqlite");
 
 const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
+const DATABASE_FILE = path.join(DATA_DIR, "store.sqlite");
+const MENU_CATALOG_FILE = path.join(ROOT, "menu-catalog.json");
 const MENU_PHOTO_DIR = path.join(DATA_DIR, "menu-photos");
 const sessions = new Map();
+let database;
 
 function loadEnvironment() {
   let file;
@@ -94,34 +98,266 @@ async function readJson(request) {
   return body;
 }
 
-async function readStore() {
-  try {
-    const content = await fs.readFile(DATA_FILE, "utf8");
-    const store = JSON.parse(content);
-    if (
-      !Array.isArray(store.users) ||
-      !Array.isArray(store.menu) ||
-      !Array.isArray(store.orders)
-    ) {
-      throw new Error("Stored data has an invalid structure.");
+function readStore() {
+  if (!database) throw new Error("The store database has not been initialized.");
+
+  const users = database.prepare(`
+    SELECT id, name, email, password_salt, password_hash, role, created_at
+    FROM users
+  `).all().map((user) => ({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    passwordSalt: user.password_salt,
+    passwordHash: user.password_hash,
+    role: user.role,
+    createdAt: user.created_at,
+  }));
+  const categories = database.prepare("SELECT name FROM categories ORDER BY name").all()
+    .map((category) => category.name);
+  const menu = database.prepare(`
+    SELECT menu_items.id, menu_items.name, categories.name AS category,
+      menu_items.subcategory, menu_items.description, menu_items.price,
+      menu_items.available, menu_items.photo_url, menu_items.photo_alt_text
+    FROM menu_items
+    JOIN categories ON categories.id = menu_items.category_id
+    ORDER BY menu_items.menu_position, menu_items.rowid
+  `).all().map((item) => ({
+    id: item.id,
+    name: item.name,
+    category: item.category,
+    subcategory: item.subcategory,
+    description: item.description,
+    price: item.price,
+    available: Boolean(item.available),
+    photoUrl: item.photo_url,
+    photoAltText: item.photo_alt_text,
+  }));
+  const orders = database.prepare(`
+    SELECT id, customer_id, customer_name, customer_email, total,
+      payment_method, gcash_reference, payment_status, status, created_at
+    FROM orders ORDER BY created_at DESC, rowid DESC
+  `).all().map((order) => ({
+    id: order.id,
+    customerId: order.customer_id,
+    customerName: order.customer_name,
+    customerEmail: order.customer_email,
+    total: order.total,
+    paymentMethod: order.payment_method,
+    gcashReference: order.gcash_reference,
+    paymentStatus: order.payment_status,
+    status: order.status,
+    createdAt: order.created_at,
+    items: [],
+  }));
+  const ordersById = new Map(orders.map((order) => [order.id, order]));
+  for (const item of database.prepare(`
+    SELECT order_id, item_id, name, description, unit_price, quantity
+    FROM order_items ORDER BY order_id, position
+  `).all()) {
+    ordersById.get(item.order_id)?.items.push({
+      id: item.item_id,
+      name: item.name,
+      description: item.description,
+      unitPrice: item.unit_price,
+      quantity: item.quantity,
+    });
+  }
+  const metadata = database.prepare("SELECT value FROM app_metadata WHERE key = 'menu_catalog_version'").get();
+
+  return {
+    users,
+    menu,
+    orders,
+    categories,
+    menuCatalogVersion: metadata ? Number(metadata.value) : 0,
+  };
+}
+
+function writeStore(store) {
+  if (!database) throw new Error("The store database has not been initialized.");
+
+  const categoryNames = new Map();
+  for (const name of [
+    ...(Array.isArray(store.categories) ? store.categories : []),
+    ...store.menu.map((item) => item.category || "Other"),
+  ]) {
+    if (typeof name === "string" && name.trim()) {
+      const trimmedName = name.trim();
+      categoryNames.set(trimmedName.toLocaleLowerCase(), trimmedName);
     }
-    return store;
+  }
+
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database.exec(`
+      DELETE FROM order_items;
+      DELETE FROM orders;
+      DELETE FROM menu_items;
+      DELETE FROM users;
+      DELETE FROM categories;
+    `);
+    const insertCategory = database.prepare("INSERT INTO categories (name) VALUES (?)");
+    for (const name of categoryNames.values()) insertCategory.run(name);
+    const categoryIds = new Map(database.prepare("SELECT id, name FROM categories").all()
+      .map((category) => [category.name.toLocaleLowerCase(), category.id]));
+
+    const insertUser = database.prepare(`
+      INSERT INTO users (id, name, email, password_salt, password_hash, role, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const user of store.users) {
+      insertUser.run(
+        user.id, user.name, user.email, user.passwordSalt, user.passwordHash, user.role, user.createdAt,
+      );
+    }
+
+    const insertMenuItem = database.prepare(`
+      INSERT INTO menu_items (
+        id, name, category_id, subcategory, description, price, available, photo_url, photo_alt_text, menu_position
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const [position, item] of store.menu.entries()) {
+      const categoryName = (item.category || "Other").trim();
+      const categoryId = categoryIds.get(categoryName.toLocaleLowerCase());
+      if (!categoryId) throw new Error(`Menu category "${categoryName}" is not available.`);
+      insertMenuItem.run(
+        item.id,
+        item.name,
+        categoryId,
+        item.subcategory || "",
+        item.description || "",
+        item.price,
+        item.available ? 1 : 0,
+        item.photoUrl || null,
+        item.photoAltText || item.name,
+        position,
+      );
+    }
+
+    const insertOrder = database.prepare(`
+      INSERT INTO orders (
+        id, customer_id, customer_name, customer_email, total, payment_method,
+        gcash_reference, payment_status, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const insertOrderItem = database.prepare(`
+      INSERT INTO order_items (
+        order_id, position, item_id, name, description, unit_price, quantity
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const order of store.orders) {
+      insertOrder.run(
+        order.id,
+        order.customerId,
+        order.customerName,
+        order.customerEmail,
+        order.total,
+        order.paymentMethod,
+        order.gcashReference || "",
+        order.paymentStatus,
+        order.status,
+        order.createdAt,
+      );
+      order.items.forEach((item, position) => {
+        insertOrderItem.run(
+          order.id, position, item.id, item.name, item.description || "", item.unitPrice, item.quantity,
+        );
+      });
+    }
+
+    database.prepare(`
+      INSERT INTO app_metadata (key, value) VALUES ('menu_catalog_version', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(String(store.menuCatalogVersion || 0));
+    database.exec("COMMIT");
   } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    const initialStore = { users: [], menu: [], orders: [] };
-    await writeStore(initialStore);
-    return initialStore;
+    database.exec("ROLLBACK");
+    throw error;
   }
 }
 
-async function writeStore(store) {
+async function initializeDatabase() {
   await fs.mkdir(DATA_DIR, { recursive: true });
-  const temporaryFile = `${DATA_FILE}.${process.pid}.tmp`;
-  await fs.writeFile(temporaryFile, JSON.stringify(store, null, 2), {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  await fs.rename(temporaryFile, DATA_FILE);
+  database = new DatabaseSync(DATABASE_FILE);
+  database.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS app_metadata (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      password_salt TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS categories (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE COLLATE NOCASE
+    );
+    CREATE TABLE IF NOT EXISTS menu_items (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      category_id INTEGER NOT NULL REFERENCES categories(id),
+      subcategory TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      price REAL NOT NULL,
+      available INTEGER NOT NULL,
+      photo_url TEXT,
+      photo_alt_text TEXT NOT NULL,
+      menu_position INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS orders (
+      id TEXT PRIMARY KEY,
+      customer_id TEXT NOT NULL,
+      customer_name TEXT NOT NULL,
+      customer_email TEXT NOT NULL,
+      total REAL NOT NULL,
+      payment_method TEXT NOT NULL,
+      gcash_reference TEXT NOT NULL DEFAULT '',
+      payment_status TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS order_items (
+      order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      item_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      unit_price REAL NOT NULL,
+      quantity INTEGER NOT NULL,
+      PRIMARY KEY (order_id, position)
+    );
+  `);
+
+  const imported = database.prepare(
+    "SELECT value FROM app_metadata WHERE key = 'legacy_json_imported'",
+  ).get();
+  if (imported) return;
+
+  let initialStore = { users: [], menu: [], orders: [] };
+  try {
+    initialStore = JSON.parse(await fs.readFile(DATA_FILE, "utf8"));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  if (
+    !initialStore ||
+    !Array.isArray(initialStore.users) ||
+    !Array.isArray(initialStore.menu) ||
+    !Array.isArray(initialStore.orders)
+  ) {
+    throw new Error("Stored data has an invalid structure.");
+  }
+  writeStore(initialStore);
+  database.prepare(
+    "INSERT INTO app_metadata (key, value) VALUES ('legacy_json_imported', '1')",
+  ).run();
 }
 
 let storeMutationQueue = Promise.resolve();
@@ -202,10 +438,13 @@ function publicMenuItem(item) {
   return {
     id: item.id,
     name: item.name,
+    category: item.category || "Other",
+    subcategory: item.subcategory || "",
     description: item.description,
     price: item.price,
     available: item.available,
     photoUrl: item.photoUrl || null,
+    photoAltText: item.photoAltText || item.name,
   };
 }
 
@@ -260,8 +499,17 @@ async function removeMenuPhoto(photoUrl) {
 function validateMenuItem(body) {
   const price = Number(body.price);
   if (!validText(body.name, 80)) return "Enter an item name (up to 80 characters).";
+  if (!validText(body.category, 40)) return "Enter a category (up to 40 characters).";
+  if (body.subcategory !== undefined &&
+    (typeof body.subcategory !== "string" || body.subcategory.trim().length > 40)) {
+    return "Subcategory must be 40 characters or fewer.";
+  }
   if (typeof body.description !== "string" || body.description.trim().length > 240) {
     return "Description must be 240 characters or fewer.";
+  }
+  if (body.photoAltText !== undefined &&
+    (typeof body.photoAltText !== "string" || body.photoAltText.trim().length > 160)) {
+    return "Photo alt text must be 160 characters or fewer.";
   }
   if (!Number.isFinite(price) || price <= 0 || price > 100000) {
     return "Enter a price greater than 0 and no more than 100,000.";
@@ -351,7 +599,7 @@ async function handleRequest(request, response) {
     jsonResponse(
       response,
       200,
-      { menu: store.menu.filter((item) => item.available).map(publicMenuItem) },
+      { menu: store.menu.filter((item) => item.available).map((item) => publicMenuItem(item)) },
     );
     return;
   }
@@ -452,6 +700,33 @@ async function handleRequest(request, response) {
     return;
   }
 
+  if (request.method === "GET" && pathname === "/api/admin/categories") {
+    if (!requireRole(request, response, "admin")) return;
+    const store = await readStore();
+    jsonResponse(response, 200, { categories: store.categories });
+    return;
+  }
+
+  if (request.method === "POST" && pathname === "/api/admin/categories") {
+    if (!requireRole(request, response, "admin")) return;
+    const body = await readJson(request);
+    if (!validText(body.name, 40)) {
+      sendError(response, 400, "Enter a category name (up to 40 characters).");
+      return;
+    }
+    const result = await updateStore((store) => {
+      const name = body.name.trim();
+      const existing = store.categories.find(
+        (category) => category.toLocaleLowerCase() === name.toLocaleLowerCase(),
+      );
+      if (existing) return { category: existing, created: false };
+      store.categories.push(name);
+      return { category: name, created: true };
+    });
+    jsonResponse(response, result.created ? 201 : 200, result);
+    return;
+  }
+
   if (request.method === "POST" && pathname === "/api/admin/menu") {
     if (!requireRole(request, response, "admin")) return;
     const body = await readJson(request);
@@ -464,22 +739,36 @@ async function handleRequest(request, response) {
     let item;
     try {
       item = await updateStore((store) => {
+        const category = store.categories.find(
+          (name) => name.toLocaleLowerCase() === body.category.trim().toLocaleLowerCase(),
+        );
+        if (!category) {
+          return { error: "Choose an existing category or create a new one.", statusCode: 400 };
+        }
         const newItem = {
           id: randomBytes(12).toString("hex"),
           name: body.name.trim(),
+          category,
+          subcategory: (body.subcategory || "").trim(),
           description: body.description.trim(),
           price: Number(Number(body.price).toFixed(2)),
           available: body.available,
           photoUrl,
+          photoAltText: body.photoAltText?.trim() || body.name.trim(),
         };
         store.menu.push(newItem);
-        return newItem;
+        return { item: newItem };
       });
     } catch (error) {
       await removeMenuPhoto(photoUrl);
       throw error;
     }
-    jsonResponse(response, 201, { item });
+    if (item.error) {
+      await removeMenuPhoto(photoUrl);
+      sendError(response, item.statusCode, item.error);
+      return;
+    }
+    jsonResponse(response, 201, item);
     return;
   }
 
@@ -499,12 +788,21 @@ async function handleRequest(request, response) {
       result = await updateStore((store) => {
         const item = store.menu.find((candidate) => candidate.id === menuItemMatch[1]);
         if (!item) return { error: "Menu item not found.", statusCode: 404 };
+        const category = store.categories.find(
+          (name) => name.toLocaleLowerCase() === body.category.trim().toLocaleLowerCase(),
+        );
+        if (!category) {
+          return { error: "Choose an existing category or create a new one.", statusCode: 400 };
+        }
         previousPhotoUrl = item.photoUrl;
         Object.assign(item, {
           name: body.name.trim(),
+          category,
+          subcategory: (body.subcategory || "").trim(),
           description: body.description.trim(),
           price: Number(Number(body.price).toFixed(2)),
           available: body.available,
+          photoAltText: body.photoAltText?.trim() || body.name.trim(),
         });
         if (photoUrl) item.photoUrl = photoUrl;
         else if (body.removePhoto) delete item.photoUrl;
@@ -585,6 +883,7 @@ async function handleRequest(request, response) {
         orderItems.push({
           id: item.id,
           name: item.name,
+          description: item.description || "",
           unitPrice: item.price,
           quantity: requested.quantity,
         });
@@ -670,6 +969,146 @@ const server = http.createServer((request, response) => {
   });
 });
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Suarez Farms ordering system is available at http://127.0.0.1:${PORT}`);
+function groupCatalogItem(item) {
+  const originalCategory = item.category || "Other";
+  const name = item.name.trim().toLowerCase();
+  const description = (item.description || "").trim().toLowerCase();
+
+  if (originalCategory === "Fried Chicken") {
+    if (name.includes("rice bowl") || name.includes("with rice")) {
+      return { category: "Rice Meals", subcategory: "Chicken Rice Meals" };
+    }
+    if (name.includes("mini fried")) return { category: originalCategory, subcategory: "Mini Fried Chicken" };
+    return { category: originalCategory, subcategory: "Fried Chicken" };
+  }
+  if (originalCategory === "Rice Meals") {
+    if (name.startsWith("sisig")) {
+      return {
+        category: "Rice Meals",
+        subcategory: name.includes("sharing") ? "Sisig Sharing" : "Sisig Meals",
+      };
+    }
+    return { category: "Rice Meals", subcategory: "Special Rice Meals" };
+  }
+  if (originalCategory === "Sisig Rice Meals" || originalCategory === "Rice Meal Specials") {
+    return {
+      category: "Rice Meals",
+      subcategory: name.includes("sisig")
+        ? name.includes("sharing") ? "Sisig Sharing" : "Sisig Meals"
+        : "Special Rice Meals",
+    };
+  }
+  if (originalCategory === "Drinks") {
+    return {
+      category: "Soda & Juices",
+      subcategory: name.includes("soda pop") ? "Soda Pop (16 oz)" : "Juices (16 oz)",
+    };
+  }
+  if (["Iced Coffee", "Hot Coffee"].includes(originalCategory)) {
+    return { category: "Coffee", subcategory: originalCategory };
+  }
+  if (["Iced Milk", "Hot Milk"].includes(originalCategory)) {
+    return { category: "Milk Drinks", subcategory: originalCategory };
+  }
+  if (originalCategory === "Frappes") {
+    return { category: "Frappe", subcategory: "Frappes" };
+  }
+  if (originalCategory === "Matcha") {
+    return { category: "Matcha & Tea", subcategory: "Matcha" };
+  }
+  if (originalCategory === "Coffee, Tea & Matcha") {
+    if (item.subcategory === "Frappes") return { category: "Frappe", subcategory: "Frappes" };
+    if (item.subcategory === "Matcha") return { category: "Matcha & Tea", subcategory: "Matcha" };
+    if (item.subcategory === "Iced Milk" || item.subcategory === "Hot Milk") {
+      return { category: "Milk Drinks", subcategory: item.subcategory };
+    }
+    return { category: "Coffee", subcategory: item.subcategory || "Coffee" };
+  }
+  if (originalCategory === "Desserts") {
+    return {
+      category: originalCategory,
+      subcategory: name.includes("croffle") ? "Croffles" : "Premium Ube Halo-Halo",
+    };
+  }
+  if (originalCategory === "Pasta") {
+    return { category: originalCategory, subcategory: "Pasta" };
+  }
+  if (originalCategory === "Kimchi Series") {
+    return {
+      category: originalCategory,
+      subcategory: name.includes("ramen") ? "Kimchi Ramen" : "Kimchi Stew",
+    };
+  }
+  if (originalCategory === "Appetizers") {
+    return {
+      category: originalCategory,
+      subcategory: name.includes("fries") ? "French Fries" : "Nachos Overload",
+    };
+  }
+  if (originalCategory === "Other" &&
+    (name.includes("americano") || /coffee|tea|matcha/.test(description))) {
+    return { category: "Coffee", subcategory: "Coffee" };
+  }
+  return { category: originalCategory, subcategory: item.subcategory || "" };
+}
+
+async function initializeMenuCatalog() {
+  await initializeDatabase();
+  const store = await readStore();
+  if (store.menuCatalogVersion >= 9) return;
+
+  const catalog = JSON.parse(await fs.readFile(MENU_CATALOG_FILE, "utf8"));
+  if (!Array.isArray(catalog.items)) {
+    throw new Error("The default menu catalog has an invalid structure.");
+  }
+  for (const item of store.menu) {
+    Object.assign(item, groupCatalogItem(item));
+    item.photoAltText ||= item.name;
+  }
+  const catalogKey = (item, category = item.category) => JSON.stringify([
+    category.trim().toLowerCase(),
+    item.name.trim().toLowerCase(),
+    (item.description || "").trim().toLowerCase(),
+    Number(item.price),
+  ]);
+  const duplicateIds = new Set();
+  for (const item of catalog.items) {
+    const groups = groupCatalogItem(item);
+    const matches = store.menu.filter((existing) =>
+      catalogKey(existing) === catalogKey(item, groups.category),
+    );
+    if (matches.length) {
+      const keep = matches.find((existing) => existing.photoUrl) || matches[0];
+      Object.assign(keep, groups);
+      keep.photoAltText ||= keep.name;
+      for (const duplicate of matches) {
+        if (duplicate !== keep) duplicateIds.add(duplicate.id);
+      }
+      continue;
+    }
+    store.menu.push({
+      id: randomBytes(12).toString("hex"),
+      name: item.name,
+      ...groups,
+      description: item.description || "",
+      price: item.price,
+      available: true,
+      photoAltText: item.name,
+    });
+  }
+  store.menu = store.menu.filter((item) => !duplicateIds.has(item.id));
+  store.categories = store.categories.filter((category) =>
+    !["Coffee, Tea & Matcha", "Sisig Rice Meals", "Rice Meal Specials"].includes(category),
+  );
+  store.menuCatalogVersion = 9;
+  await writeStore(store);
+}
+
+initializeMenuCatalog().then(() => {
+  server.listen(PORT, "127.0.0.1", () => {
+    console.log(`Suarez Farms ordering system is available at http://127.0.0.1:${PORT}`);
+  });
+}).catch((error) => {
+  console.error("Could not initialize the menu catalog:", error);
+  process.exitCode = 1;
 });

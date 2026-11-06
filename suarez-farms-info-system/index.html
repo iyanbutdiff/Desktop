@@ -87,54 +87,21 @@
             <p class="order-note">Create a customer account to place an order. GCash is required.</p>
           </div>
           <p id="store-message" class="notice" role="status" aria-live="polite"></p>
-          <div class="menu-boards-heading">
+          <div class="menu-intro-heading kiosk-intro">
             <div>
-              <h4>Browse the café menu</h4>
-              <p>Explore the current menu boards and prices. Sign in to order available items online.</p>
+              <h4>What would you like today?</h4>
+              <p>Choose a category, then tap an item to add it to your order.</p>
             </div>
+            <span class="kiosk-price-note">All prices in PHP</span>
           </div>
-          <div id="menu-boards" class="menu-boards" aria-label="Suarez Farms menu boards">
-            <a class="menu-board" href="assets/menu/fried-chicken.jpg" target="_blank" rel="noreferrer">
-              <img src="assets/menu/fried-chicken.jpg" alt="Suarez Farms fried chicken menu and prices" loading="lazy" />
-              <span>Fried chicken</span>
-            </a>
-            <a class="menu-board" href="assets/menu/soda-and-juices.jpg" target="_blank" rel="noreferrer">
-              <img src="assets/menu/soda-and-juices.jpg" alt="Suarez Farms soda and juices menu and prices" loading="lazy" />
-              <span>Soda &amp; juices</span>
-            </a>
-            <a class="menu-board" href="assets/menu/desserts.jpg" target="_blank" rel="noreferrer">
-              <img src="assets/menu/desserts.jpg" alt="Suarez Farms desserts menu and prices" loading="lazy" />
-              <span>Desserts</span>
-            </a>
-            <a class="menu-board" href="assets/menu/pasta.jpg" target="_blank" rel="noreferrer">
-              <img src="assets/menu/pasta.jpg" alt="Suarez Farms pasta menu and prices" loading="lazy" />
-              <span>Pasta</span>
-            </a>
-            <a class="menu-board" href="assets/menu/coffee-tea-and-matcha.jpg" target="_blank" rel="noreferrer">
-              <img src="assets/menu/coffee-tea-and-matcha.jpg" alt="Suarez Farms coffee, tea and matcha menu and prices" loading="lazy" />
-              <span>Coffee, tea &amp; matcha</span>
-            </a>
-            <a class="menu-board" href="assets/menu/kimchi-series.jpg" target="_blank" rel="noreferrer">
-              <img src="assets/menu/kimchi-series.jpg" alt="Suarez Farms kimchi series menu and prices" loading="lazy" />
-              <span>Kimchi series</span>
-            </a>
-            <a class="menu-board" href="assets/menu/sisig-rice-meals.jpg" target="_blank" rel="noreferrer">
-              <img src="assets/menu/sisig-rice-meals.jpg" alt="Suarez Farms sisig rice meals menu and prices" loading="lazy" />
-              <span>Sisig rice meals</span>
-            </a>
-            <a class="menu-board" href="assets/menu/appetizers.jpg" target="_blank" rel="noreferrer">
-              <img src="assets/menu/appetizers.jpg" alt="Suarez Farms appetizers menu and prices" loading="lazy" />
-              <span>Appetizers</span>
-            </a>
-            <a class="menu-board" href="assets/menu/rice-meal-specials.jpg" target="_blank" rel="noreferrer">
-              <img src="assets/menu/rice-meal-specials.jpg" alt="Suarez Farms rice meal specials and prices" loading="lazy" />
-              <span>Rice meal specials</span>
-            </a>
-          </div>
-          <div class="store-layout">
+          <div class="store-layout kiosk-layout">
+            <nav id="menu-categories" class="menu-categories" aria-label="Menu categories"></nav>
             <div id="menu-grid" class="menu-grid" aria-live="polite"></div>
             <aside class="cart-panel" aria-labelledby="cart-title">
-              <h4 id="cart-title">Your order</h4>
+              <div class="cart-heading">
+                <h4 id="cart-title">Your order</h4>
+                <span id="cart-count" class="cart-count">0 items</span>
+              </div>
               <div id="cart-items" class="cart-items"></div>
               <p class="cart-total"><span>Total</span><strong id="cart-total">₱0.00</strong></p>
               <form id="checkout-form">
@@ -145,6 +112,7 @@
                 </fieldset>
                 <label class="field-label" for="gcash-reference">GCash reference (if already paid)</label>
                 <input id="gcash-reference" name="gcashReference" type="text" maxlength="80" placeholder="Optional transaction reference" />
+                <p id="checkout-help" class="checkout-help">Sign in or create a customer account to send your order. Your cart will be kept.</p>
                 <button class="primary-btn checkout-button" type="submit">Place GCash order</button>
               </form>
             </aside>
@@ -175,13 +143,25 @@
                 <input id="menu-item-id" type="hidden" />
                 <label class="field-label" for="menu-name">Item name</label>
                 <input id="menu-name" name="name" type="text" maxlength="80" required />
+                <label class="field-label" for="menu-category">Category</label>
+                <select id="menu-category" name="category" required>
+                  <option value="">Select a category</option>
+                  <option value="__new__">Create a new category…</option>
+                </select>
+                <label id="menu-new-category-label" class="field-label" for="menu-new-category" hidden>New category name</label>
+                <input id="menu-new-category" name="newCategory" type="text" maxlength="40" placeholder="e.g. Frappe" hidden />
+                <label class="field-label" for="menu-subcategory">Subcategory (optional)</label>
+                <input id="menu-subcategory" name="subcategory" type="text" maxlength="40" placeholder="e.g. Iced Coffee" />
                 <label class="field-label" for="menu-description">Description</label>
                 <textarea id="menu-description" name="description" maxlength="240" rows="3"></textarea>
                 <label class="field-label" for="menu-price">Price (₱)</label>
                 <input id="menu-price" name="price" type="number" min="0.01" max="100000" step="0.01" required />
+                <label class="field-label" for="menu-photo-alt-text">Photo alt text</label>
+                <input id="menu-photo-alt-text" name="photoAltText" type="text" maxlength="160" placeholder="Describe the item photo, or what it should show" />
                 <label class="field-label" for="menu-photo">Item photo</label>
                 <input id="menu-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" />
                 <p class="upload-help">JPG, PNG or WebP · up to 5 MB. Optional.</p>
+                <div id="menu-photo-placeholder" class="menu-photo-placeholder">No photo selected. Add an image here whenever you are ready.</div>
                 <img id="menu-photo-preview" class="menu-photo-preview" alt="Menu item photo preview" hidden />
                 <label id="remove-photo-label" class="checkbox-label" hidden>
                   <input id="remove-menu-photo" type="checkbox" /> Remove current photo
@@ -230,10 +210,7 @@
               Suarez Farms is a cozy café in Naujan, Oriental Mindoro, made for
               slowing down, enjoying coffee, and taking in the fresh countryside air.
             </p>
-            <p>
-              The café's Facebook profile describes a breathtaking view of Mount
-              Halcon framed by the rice fields of Oriental Mindoro.
-            </p>
+            
           </div>
 
           <div id="contact" class="panel contact-panel">
@@ -294,6 +271,15 @@
           <button class="primary-btn auth-submit" type="submit">Sign in</button>
         </form>
         <p id="auth-message" class="notice" role="alert" aria-live="polite"></p>
+      </div>
+    </dialog>
+
+    <dialog id="order-confirmation-dialog" class="auth-dialog order-confirmation-dialog" aria-labelledby="order-confirmation-title">
+      <div class="auth-dialog-content">
+        <p class="eyebrow">Suarez Farms ordering</p>
+        <h2 id="order-confirmation-title">Order received!</h2>
+        <p id="order-confirmation-message" class="order-confirmation-message"></p>
+        <button id="order-confirmation-close" class="primary-btn" type="button">Continue browsing</button>
       </div>
     </dialog>
 
