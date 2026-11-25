@@ -9,12 +9,15 @@ const {
 const { DatabaseSync } = require("node:sqlite");
 
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, "data");
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 const DATABASE_FILE = path.join(DATA_DIR, "store.sqlite");
 const MENU_CATALOG_FILE = path.join(ROOT, "menu-catalog.json");
 const MENU_PHOTO_DIR = path.join(DATA_DIR, "menu-photos");
+const ORDER_RECEIPT_DIR = path.join(DATA_DIR, "order-receipts");
+const PAYMENT_ASSET_DIR = path.join(DATA_DIR, "payment-assets");
 const sessions = new Map();
+const lookupAttempts = new Map();
 let database;
 
 function loadEnvironment() {
@@ -135,7 +138,8 @@ function readStore() {
   }));
   const orders = database.prepare(`
     SELECT id, customer_id, customer_name, customer_email, total,
-      payment_method, gcash_reference, payment_status, status, created_at
+      payment_method, gcash_reference, payment_status, status, created_at,
+      receipt_path, verified_at
     FROM orders ORDER BY created_at DESC, rowid DESC
   `).all().map((order) => ({
     id: order.id,
@@ -148,11 +152,13 @@ function readStore() {
     paymentStatus: order.payment_status,
     status: order.status,
     createdAt: order.created_at,
+    receiptPath: order.receipt_path,
+    verifiedAt: order.verified_at,
     items: [],
   }));
   const ordersById = new Map(orders.map((order) => [order.id, order]));
   for (const item of database.prepare(`
-    SELECT order_id, item_id, name, description, unit_price, quantity
+    SELECT order_id, item_id, name, description, unit_price, quantity, customizations_json
     FROM order_items ORDER BY order_id, position
   `).all()) {
     ordersById.get(item.order_id)?.items.push({
@@ -161,15 +167,29 @@ function readStore() {
       description: item.description,
       unitPrice: item.unit_price,
       quantity: item.quantity,
+      customizations: JSON.parse(item.customizations_json || "{}"),
     });
   }
   const metadata = database.prepare("SELECT value FROM app_metadata WHERE key = 'menu_catalog_version'").get();
+  const addons = database.prepare(
+    "SELECT id, name, price, available FROM addons ORDER BY name",
+  ).all().map((addon) => ({
+    id: addon.id,
+    name: addon.name,
+    price: addon.price,
+    available: Boolean(addon.available),
+  }));
+  const settings = Object.fromEntries(database.prepare(
+    "SELECT key, value FROM store_settings",
+  ).all().map((setting) => [setting.key, setting.value]));
 
   return {
     users,
     menu,
     orders,
     categories,
+    addons,
+    settings,
     menuCatalogVersion: metadata ? Number(metadata.value) : 0,
   };
 }
@@ -238,13 +258,13 @@ function writeStore(store) {
     const insertOrder = database.prepare(`
       INSERT INTO orders (
         id, customer_id, customer_name, customer_email, total, payment_method,
-        gcash_reference, payment_status, status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        gcash_reference, payment_status, status, created_at, receipt_path, verified_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const insertOrderItem = database.prepare(`
       INSERT INTO order_items (
-        order_id, position, item_id, name, description, unit_price, quantity
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        order_id, position, item_id, name, description, unit_price, quantity, customizations_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const order of store.orders) {
       insertOrder.run(
@@ -258,10 +278,19 @@ function writeStore(store) {
         order.paymentStatus,
         order.status,
         order.createdAt,
+        order.receiptPath || null,
+        order.verifiedAt || null,
       );
       order.items.forEach((item, position) => {
         insertOrderItem.run(
-          order.id, position, item.id, item.name, item.description || "", item.unitPrice, item.quantity,
+          order.id,
+          position,
+          item.id,
+          item.name,
+          item.description || "",
+          item.unitPrice,
+          item.quantity,
+          JSON.stringify(item.customizations || {}),
         );
       });
     }
@@ -270,6 +299,15 @@ function writeStore(store) {
       INSERT INTO app_metadata (key, value) VALUES ('menu_catalog_version', ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(String(store.menuCatalogVersion || 0));
+    if (store.settings) {
+      database.prepare("DELETE FROM store_settings").run();
+      const insertSetting = database.prepare(
+        "INSERT INTO store_settings (key, value) VALUES (?, ?)",
+      );
+      for (const [key, value] of Object.entries(store.settings)) {
+        insertSetting.run(key, value);
+      }
+    }
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");
@@ -321,7 +359,9 @@ async function initializeDatabase() {
       gcash_reference TEXT NOT NULL DEFAULT '',
       payment_status TEXT NOT NULL,
       status TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      receipt_path TEXT,
+      verified_at TEXT
     );
     CREATE TABLE IF NOT EXISTS order_items (
       order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
@@ -331,9 +371,54 @@ async function initializeDatabase() {
       description TEXT NOT NULL DEFAULT '',
       unit_price REAL NOT NULL,
       quantity INTEGER NOT NULL,
+      customizations_json TEXT NOT NULL DEFAULT '{}',
       PRIMARY KEY (order_id, position)
     );
+    CREATE TABLE IF NOT EXISTS addons (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      price REAL NOT NULL CHECK (price >= 0),
+      available INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE IF NOT EXISTS store_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
   `);
+
+  const ensureColumn = (table, column, definition) => {
+    const existing = database.prepare(`PRAGMA table_info(${table})`).all()
+      .some((entry) => entry.name === column);
+    if (!existing) database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  };
+  ensureColumn("orders", "receipt_path", "TEXT");
+  ensureColumn("orders", "verified_at", "TEXT");
+  ensureColumn("order_items", "customizations_json", "TEXT NOT NULL DEFAULT '{}'");
+  database.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS orders_gcash_reference_unique
+      ON orders(gcash_reference) WHERE gcash_reference <> '';
+    CREATE INDEX IF NOT EXISTS orders_created_at_idx ON orders(created_at);
+    CREATE INDEX IF NOT EXISTS orders_status_idx ON orders(status, payment_status);
+  `);
+  database.prepare(
+    "INSERT OR IGNORE INTO store_settings (key, value) VALUES (?, ?)",
+  ).run("gcash_merchant_name", process.env.GCASH_MERCHANT_NAME || "Suarez Farms");
+  database.prepare(
+    "INSERT OR IGNORE INTO store_settings (key, value) VALUES (?, ?)",
+  ).run("gcash_merchant_number", process.env.GCASH_MERCHANT_NUMBER || "");
+  const addonCount = database.prepare("SELECT COUNT(*) AS count FROM addons").get().count;
+  if (addonCount === 0) {
+    const insertAddon = database.prepare(
+      "INSERT INTO addons (id, name, price, available) VALUES (?, ?, ?, 1)",
+    );
+    for (const addon of [
+      ["espresso-shot", "Extra espresso shot", 25],
+      ["oat-milk", "Oat milk", 20],
+      ["caramel-syrup", "Caramel syrup", 15],
+      ["vanilla-syrup", "Vanilla syrup", 15],
+      ["whipped-cream", "Whipped cream", 20],
+    ]) insertAddon.run(...addon);
+  }
 
   const imported = database.prepare(
     "SELECT value FROM app_metadata WHERE key = 'legacy_json_imported'",
@@ -435,6 +520,13 @@ function validEmail(value) {
 }
 
 function publicMenuItem(item) {
+  const beverageCategories = new Set([
+    "Coffee",
+    "Frappe",
+    "Milk Drinks",
+    "Matcha & Tea",
+    "Soda & Juices",
+  ]);
   return {
     id: item.id,
     name: item.name,
@@ -445,7 +537,56 @@ function publicMenuItem(item) {
     available: item.available,
     photoUrl: item.photoUrl || null,
     photoAltText: item.photoAltText || item.name,
+    customizable: beverageCategories.has(item.category || "Other"),
   };
+}
+
+function publicOrder(order, includeCustomer = false) {
+  const result = {
+    id: order.id,
+    total: order.total,
+    paymentMethod: order.paymentMethod,
+    gcashReference: order.gcashReference,
+    paymentStatus: order.paymentStatus,
+    status: order.status,
+    createdAt: order.createdAt,
+    verifiedAt: order.verifiedAt || null,
+    receiptAvailable: Boolean(order.receiptPath),
+    items: order.items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      description: item.description,
+      unitPrice: item.unitPrice,
+      quantity: item.quantity,
+      customizations: item.customizations || {},
+    })),
+  };
+  if (includeCustomer) {
+    result.customerName = order.customerName;
+    result.customerEmail = order.customerEmail;
+  }
+  return result;
+}
+
+function storefrontPaymentConfig(settings) {
+  const qrImageUrl = settings.gcash_qr_url || "";
+  const merchantNumber = settings.gcash_merchant_number || "";
+  return {
+    merchantName: settings.gcash_merchant_name || "Suarez Farms",
+    merchantNumber,
+    qrImageUrl,
+    configured: Boolean(merchantNumber && qrImageUrl),
+  };
+}
+
+function checkOrderLookupRateLimit(request) {
+  const address = request.socket.remoteAddress || "unknown";
+  const now = Date.now();
+  const attempts = (lookupAttempts.get(address) || []).filter((time) => now - time < 60_000);
+  if (attempts.length >= 12) return false;
+  attempts.push(now);
+  lookupAttempts.set(address, attempts);
+  return true;
 }
 
 function parseMenuPhoto(photo) {
@@ -483,6 +624,29 @@ async function saveMenuPhoto(photo) {
   await fs.mkdir(MENU_PHOTO_DIR, { recursive: true });
   await fs.writeFile(path.join(MENU_PHOTO_DIR, filename), parsed.content, { flag: "wx" });
   return `/uploads/${filename}`;
+}
+
+async function saveImageDataUrl(dataUrl, directory) {
+  const parsed = parseMenuPhoto(dataUrl);
+  if (typeof parsed === "string") {
+    const error = new Error(parsed);
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!parsed) return null;
+  const filename = `${randomBytes(16).toString("hex")}.${parsed.extension}`;
+  await fs.mkdir(directory, { recursive: true });
+  await fs.writeFile(path.join(directory, filename), parsed.content, { flag: "wx" });
+  return filename;
+}
+
+async function removeImageAsset(directory, filename) {
+  if (typeof filename !== "string" || !/^[a-f0-9]{32}\.(?:jpg|png|webp)$/.test(filename)) return;
+  try {
+    await fs.unlink(path.join(directory, filename));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
 }
 
 async function removeMenuPhoto(photoUrl) {
@@ -554,6 +718,8 @@ async function serveStatic(pathname, response) {
   }
   const uploadMatch = pathname.match(/^\/uploads\/([a-f0-9]{32}\.(?:jpg|png|webp))$/);
   if (!filePath && uploadMatch) filePath = path.join(MENU_PHOTO_DIR, uploadMatch[1]);
+  const paymentAssetMatch = pathname.match(/^\/payment-assets\/([a-f0-9]{32}\.(?:jpg|png|webp))$/);
+  if (!filePath && paymentAssetMatch) filePath = path.join(PAYMENT_ASSET_DIR, paymentAssetMatch[1]);
   if (!filePath) {
     sendError(response, 404, "Page not found.");
     return;
@@ -573,6 +739,18 @@ async function serveStatic(pathname, response) {
     }
     throw error;
   }
+}
+
+async function serveProtectedImage(filename, directory, response) {
+  const filePath = path.join(directory, filename);
+  const content = await fs.readFile(filePath);
+  const type = mimeType(filePath);
+  response.writeHead(200, {
+    "Content-Type": type || "application/octet-stream",
+    "Cache-Control": "private, no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(content);
 }
 
 async function handleRequest(request, response) {
@@ -601,6 +779,66 @@ async function handleRequest(request, response) {
       200,
       { menu: store.menu.filter((item) => item.available).map((item) => publicMenuItem(item)) },
     );
+    return;
+  }
+
+  if (request.method === "GET" && pathname === "/api/storefront-config") {
+    const store = await readStore();
+    jsonResponse(response, 200, storefrontPaymentConfig(store.settings));
+    return;
+  }
+
+  if (request.method === "GET" && pathname === "/api/addons") {
+    const store = await readStore();
+    jsonResponse(response, 200, {
+      addons: store.addons.filter((addon) => addon.available),
+    });
+    return;
+  }
+
+  if (request.method === "GET" && pathname === "/api/admin/settings/gcash") {
+    if (!requireRole(request, response, "admin")) return;
+    const store = await readStore();
+    jsonResponse(response, 200, storefrontPaymentConfig(store.settings));
+    return;
+  }
+
+  if (request.method === "PUT" && pathname === "/api/admin/settings/gcash") {
+    if (!requireRole(request, response, "admin")) return;
+    const body = await readJson(request);
+    if (!validText(body.merchantName, 80)) {
+      sendError(response, 400, "Enter a merchant name (up to 80 characters).");
+      return;
+    }
+    if (typeof body.merchantNumber !== "string" ||
+      (body.merchantNumber.trim() !== "" &&
+        !/^(?:09\d{9}|\+639\d{9})$/.test(body.merchantNumber.trim()))) {
+      sendError(response, 400, "Enter a valid GCash number (09XXXXXXXXX or +639XXXXXXXXX).");
+      return;
+    }
+
+    const qrFilename = body.qrImage === undefined
+      ? null
+      : await saveImageDataUrl(body.qrImage, PAYMENT_ASSET_DIR);
+    let previousQrUrl = "";
+    let result;
+    try {
+      result = await updateStore((store) => {
+        previousQrUrl = store.settings.gcash_qr_url || "";
+        store.settings.gcash_merchant_name = body.merchantName.trim();
+        store.settings.gcash_merchant_number = body.merchantNumber.trim();
+        if (qrFilename) store.settings.gcash_qr_url = `/payment-assets/${qrFilename}`;
+        return { config: storefrontPaymentConfig(store.settings) };
+      });
+    } catch (error) {
+      await removeImageAsset(PAYMENT_ASSET_DIR, qrFilename);
+      throw error;
+    }
+    if (qrFilename && previousQrUrl !== result.config.qrImageUrl) {
+      const previousFilename = previousQrUrl.match(/^\/payment-assets\/([a-f0-9]{32}\.(?:jpg|png|webp))$/)?.[1];
+      await removeImageAsset(PAYMENT_ASSET_DIR, previousFilename);
+    }
+    jsonResponse(response, 200, result.config);
     return;
   }
 
@@ -843,83 +1081,285 @@ async function handleRequest(request, response) {
     const customer = requireRole(request, response, "customer");
     if (!customer) return;
     const store = await readStore();
-    const orders = store.orders.filter((order) => order.customerId === customer.id);
+    const orders = store.orders
+      .filter((order) => order.customerId === customer.id)
+      .map((order) => publicOrder(order));
     jsonResponse(response, 200, { orders });
     return;
   }
 
+  if (request.method === "GET" && pathname === "/api/orders/lookup") {
+    if (!checkOrderLookupRateLimit(request)) {
+      sendError(response, 429, "Too many lookup attempts. Please wait and try again.");
+      return;
+    }
+    const reference = url.searchParams.get("reference") || "";
+    if (!/^\d{13}$/.test(reference)) {
+      sendError(response, 400, "Enter the 13-digit GCash reference number.");
+      return;
+    }
+    const store = await readStore();
+    const order = store.orders.find((candidate) => candidate.gcashReference === reference);
+    if (!order) {
+      sendError(response, 404, "No order was found for that GCash reference number.");
+      return;
+    }
+    jsonResponse(response, 200, { order: publicOrder(order) });
+    return;
+  }
+
+  const receiptMatch = pathname.match(/^\/api\/orders\/([A-F0-9]{16})\/receipt$/);
+  if (request.method === "GET" && receiptMatch) {
+    const store = await readStore();
+    const order = store.orders.find((candidate) => candidate.id === receiptMatch[1]);
+    if (!order || !order.receiptPath) {
+      sendError(response, 404, "Receipt image not found.");
+      return;
+    }
+    const session = getSession(request);
+    const reference = url.searchParams.get("reference") || "";
+    const isOwner = session?.user.role === "customer" && session.user.id === order.customerId;
+    const isAdmin = session?.user.role === "admin";
+    const isGuestWithReference = reference.length > 0 && reference === order.gcashReference;
+    if (!isOwner && !isAdmin && !isGuestWithReference) {
+      sendError(response, 404, "Receipt image not found.");
+      return;
+    }
+    try {
+      await serveProtectedImage(order.receiptPath, ORDER_RECEIPT_DIR, response);
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        sendError(response, 404, "Receipt image not found.");
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+
   if (request.method === "POST" && pathname === "/api/orders") {
-    const customer = requireRole(request, response, "customer");
-    if (!customer) return;
+    const session = getSession(request);
+    if (session?.user.role === "admin") {
+      sendError(response, 403, "Sign out of the admin account before placing a customer order.");
+      return;
+    }
+    const customer = session?.user.role === "customer" ? session.user : null;
     const body = await readJson(request);
     if (body.paymentMethod !== "gcash") {
       sendError(response, 400, "GCash is the required payment method.");
+      return;
+    }
+    if (typeof body.gcashReference !== "string" || !/^\d{13}$/.test(body.gcashReference.trim())) {
+      sendError(response, 400, "Enter the 13-digit GCash reference number.");
       return;
     }
     if (!Array.isArray(body.items) || body.items.length < 1 || body.items.length > 30) {
       sendError(response, 400, "Add at least one menu item to your order.");
       return;
     }
-    if (body.gcashReference !== undefined &&
-      (typeof body.gcashReference !== "string" || body.gcashReference.length > 80)) {
-      sendError(response, 400, "GCash reference must be 80 characters or fewer.");
+    if (!customer && (!validText(body.customerName, 80) || !validEmail(body.customerEmail))) {
+      sendError(response, 400, "Enter your name and a valid email address for guest checkout.");
+      return;
+    }
+    const paymentConfig = storefrontPaymentConfig((await readStore()).settings);
+    if (!paymentConfig.configured) {
+      sendError(response, 503, "GCash merchant details and QR code have not been configured by the shop.");
       return;
     }
     if (body.items.some((item) => !item || typeof item.id !== "string" ||
-      !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 20)) {
+      item.id.length > 64 || !Number.isInteger(item.quantity) ||
+      item.quantity < 1 || item.quantity > 20)) {
       sendError(response, 400, "Each order item needs a valid quantity from 1 to 20.");
       return;
     }
 
-    const result = await updateStore((store) => {
-      const orderItems = [];
-      for (const requested of body.items) {
-        const item = store.menu.find((candidate) =>
-          candidate.id === requested.id && candidate.available,
-        );
-        if (!item) {
-          return { error: "An item in your cart is no longer available.", statusCode: 400 };
+    const receiptFilename = body.receiptImage === undefined
+      ? null
+      : await saveImageDataUrl(body.receiptImage, ORDER_RECEIPT_DIR);
+    let result;
+    try {
+      result = await updateStore((store) => {
+        if (store.orders.some((order) => order.gcashReference === body.gcashReference.trim())) {
+          return {
+            error: "That GCash reference number has already been submitted.",
+            statusCode: 409,
+          };
         }
-        orderItems.push({
-          id: item.id,
-          name: item.name,
-          description: item.description || "",
-          unitPrice: item.price,
-          quantity: requested.quantity,
-        });
-      }
-      const totalInCents = orderItems.reduce(
-        (sum, item) => sum + Math.round(item.unitPrice * 100) * item.quantity,
-        0,
-      );
-      const order = {
-        id: randomBytes(8).toString("hex").toUpperCase(),
-        customerId: customer.id,
-        customerName: customer.name,
-        customerEmail: customer.email,
-        items: orderItems,
-        total: totalInCents / 100,
-        paymentMethod: "gcash",
-        gcashReference: (body.gcashReference || "").trim(),
-        paymentStatus: "pending",
-        status: "received",
-        createdAt: new Date().toISOString(),
-      };
-      store.orders.unshift(order);
-      return { order };
-    });
+        const orderItems = [];
+        for (const requested of body.items) {
+          const item = store.menu.find((candidate) =>
+            candidate.id === requested.id && candidate.available,
+          );
+          if (!item) {
+            return { error: "An item in your cart is no longer available.", statusCode: 400 };
+          }
+          const options = requested.options && typeof requested.options === "object"
+            ? requested.options
+            : {};
+          const addons = Array.isArray(options.addons) ? options.addons : [];
+          if (addons.length > 8 || addons.some((id) => typeof id !== "string") ||
+            new Set(addons).size !== addons.length) {
+            return { error: "Choose valid add-ons for each drink.", statusCode: 400 };
+          }
+          const isCustomizable = publicMenuItem(item).customizable;
+          const size = options.size || "12 oz";
+          const temperature = options.temperature || "Iced";
+          const milk = options.milk || "Whole milk";
+          const sugar = options.sugar || "100%";
+          if (isCustomizable && (
+            !["12 oz", "16 oz", "22 oz"].includes(size) ||
+            !["Hot", "Iced"].includes(temperature) ||
+            !["Whole milk", "Oat milk", "Almond milk", "None"].includes(milk) ||
+            !["0%", "25%", "50%", "75%", "100%"].includes(sugar)
+          )) {
+            return { error: "Choose valid drink customizations.", statusCode: 400 };
+          }
+          if (!isCustomizable && addons.length) {
+            return { error: "Add-ons are only available for drinks.", statusCode: 400 };
+          }
+          const selectedAddons = addons.map((id) =>
+            store.addons.find((addon) => addon.id === id && addon.available),
+          );
+          if (selectedAddons.some((addon) => !addon)) {
+            return { error: "An add-on is no longer available.", statusCode: 400 };
+          }
+          const addonTotal = selectedAddons.reduce(
+            (sum, addon) => sum + Math.round(addon.price * 100),
+            0,
+          );
+          orderItems.push({
+            id: item.id,
+            name: item.name,
+            description: item.description || "",
+            unitPrice: (Math.round(item.price * 100) + addonTotal) / 100,
+            quantity: requested.quantity,
+            customizations: isCustomizable ? {
+              size,
+              temperature,
+              milk,
+              sugar,
+              addons: selectedAddons.map(({ id, name, price }) => ({ id, name, price })),
+            } : {},
+          });
+        }
+        const totalInCents = orderItems.reduce(
+          (sum, item) => sum + Math.round(item.unitPrice * 100) * item.quantity,
+          0,
+        );
+        const order = {
+          id: randomBytes(8).toString("hex").toUpperCase(),
+          customerId: customer?.id || `guest_${randomBytes(12).toString("hex")}`,
+          customerName: customer?.name || body.customerName.trim(),
+          customerEmail: customer?.email || body.customerEmail.trim().toLowerCase(),
+          items: orderItems,
+          total: totalInCents / 100,
+          paymentMethod: "gcash",
+          gcashReference: body.gcashReference.trim(),
+          paymentStatus: "pending",
+          status: "pending_verification",
+          createdAt: new Date().toISOString(),
+          receiptPath: receiptFilename,
+          verifiedAt: null,
+        };
+        store.orders.unshift(order);
+        return { order };
+      });
+    } catch (error) {
+      await removeImageAsset(ORDER_RECEIPT_DIR, receiptFilename);
+      throw error;
+    }
     if (result.error) {
+      await removeImageAsset(ORDER_RECEIPT_DIR, receiptFilename);
       sendError(response, result.statusCode, result.error);
       return;
     }
-    jsonResponse(response, 201, { order: result.order });
+    jsonResponse(response, 201, { order: publicOrder(result.order) });
+    return;
+  }
+
+  if (request.method === "GET" && pathname === "/api/admin/dashboard") {
+    if (!requireRole(request, response, "admin")) return;
+    const store = await readStore();
+    const shopDate = (value) => {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Manila",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(new Date(value));
+      const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+      return `${values.year}-${values.month}-${values.day}`;
+    };
+    const today = shopDate(Date.now());
+    const itemSales = new Map();
+    for (const order of store.orders) {
+      if (order.status === "cancelled") continue;
+      for (const item of order.items) {
+        const current = itemSales.get(item.name) || 0;
+        itemSales.set(item.name, current + item.quantity);
+      }
+    }
+    const bestSelling = [...itemSales.entries()].sort((left, right) => right[1] - left[1])[0];
+    jsonResponse(response, 200, {
+      todayRevenue: store.orders
+        .filter((order) => shopDate(order.createdAt) === today &&
+          order.paymentStatus === "paid" && order.status !== "cancelled")
+        .reduce((sum, order) => sum + order.total, 0),
+      pendingVerifications: store.orders.filter((order) =>
+        order.paymentStatus === "pending" && order.status === "pending_verification",
+      ).length,
+      totalOrders: store.orders.length,
+      bestSellingItem: bestSelling ? { name: bestSelling[0], quantity: bestSelling[1] } : null,
+    });
     return;
   }
 
   if (request.method === "GET" && pathname === "/api/admin/orders") {
     if (!requireRole(request, response, "admin")) return;
     const store = await readStore();
-    jsonResponse(response, 200, { orders: store.orders });
+    const search = (url.searchParams.get("q") || "").trim().toLocaleLowerCase();
+    const status = url.searchParams.get("status") || "";
+    const paymentStatus = url.searchParams.get("paymentStatus") || "";
+    const validStatuses = ["pending_verification", "received", "preparing", "ready", "completed", "cancelled"];
+    if (search.length > 120 || (status && !validStatuses.includes(status)) ||
+      (paymentStatus && !["pending", "paid", "rejected"].includes(paymentStatus))) {
+      sendError(response, 400, "Invalid order search or filter.");
+      return;
+    }
+    const orders = store.orders.filter((order) => {
+      if (status && order.status !== status) return false;
+      if (paymentStatus && order.paymentStatus !== paymentStatus) return false;
+      if (!search) return true;
+      return [
+        order.id,
+        order.customerName,
+        order.customerEmail,
+        order.gcashReference,
+        ...order.items.map((item) => item.name),
+      ].some((value) => value.toLocaleLowerCase().includes(search));
+    }).map((order) => publicOrder(order, true));
+    jsonResponse(response, 200, { orders });
+    return;
+  }
+
+  const adminReceiptMatch = pathname.match(/^\/api\/admin\/orders\/([A-F0-9]{16})\/receipt$/);
+  if (request.method === "GET" && adminReceiptMatch) {
+    if (!requireRole(request, response, "admin")) return;
+    const store = await readStore();
+    const order = store.orders.find((candidate) => candidate.id === adminReceiptMatch[1]);
+    if (!order || !order.receiptPath) {
+      sendError(response, 404, "Receipt image not found.");
+      return;
+    }
+    try {
+      await serveProtectedImage(order.receiptPath, ORDER_RECEIPT_DIR, response);
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        sendError(response, 404, "Receipt image not found.");
+        return;
+      }
+      throw error;
+    }
     return;
   }
 
@@ -927,27 +1367,39 @@ async function handleRequest(request, response) {
   if (orderMatch && request.method === "PATCH") {
     if (!requireRole(request, response, "admin")) return;
     const body = await readJson(request);
-    const validStatuses = ["received", "preparing", "ready", "completed", "cancelled"];
+    const validStatuses = ["pending_verification", "received", "preparing", "ready", "completed", "cancelled"];
     if (body.status !== undefined && !validStatuses.includes(body.status)) {
       sendError(response, 400, "Choose a valid order status.");
       return;
     }
-    if (body.paymentStatus !== undefined && !["pending", "paid"].includes(body.paymentStatus)) {
+    if (body.paymentStatus !== undefined && !["pending", "paid", "rejected"].includes(body.paymentStatus)) {
       sendError(response, 400, "Choose a valid payment status.");
+      return;
+    }
+    if (body.action !== undefined && !["verify", "reject"].includes(body.action)) {
+      sendError(response, 400, "Choose a valid payment action.");
       return;
     }
     const result = await updateStore((store) => {
       const order = store.orders.find((candidate) => candidate.id === orderMatch[1]);
       if (!order) return { error: "Order not found.", statusCode: 404 };
+      if (body.action === "verify") {
+        order.paymentStatus = "paid";
+        order.status = "preparing";
+        order.verifiedAt = new Date().toISOString();
+      } else if (body.action === "reject") {
+        order.paymentStatus = "rejected";
+        order.status = "cancelled";
+      }
       if (body.status !== undefined) order.status = body.status;
       if (body.paymentStatus !== undefined) order.paymentStatus = body.paymentStatus;
-      return { order };
+      return { order: publicOrder(order, true) };
     });
     if (result.error) {
       sendError(response, result.statusCode, result.error);
       return;
     }
-    jsonResponse(response, 200, { order: result.order });
+    jsonResponse(response, 200, result);
     return;
   }
 
@@ -1055,53 +1507,90 @@ function groupCatalogItem(item) {
 async function initializeMenuCatalog() {
   await initializeDatabase();
   const store = await readStore();
-  if (store.menuCatalogVersion >= 9) return;
-
-  const catalog = JSON.parse(await fs.readFile(MENU_CATALOG_FILE, "utf8"));
-  if (!Array.isArray(catalog.items)) {
-    throw new Error("The default menu catalog has an invalid structure.");
-  }
-  for (const item of store.menu) {
-    Object.assign(item, groupCatalogItem(item));
-    item.photoAltText ||= item.name;
-  }
-  const catalogKey = (item, category = item.category) => JSON.stringify([
-    category.trim().toLowerCase(),
-    item.name.trim().toLowerCase(),
-    (item.description || "").trim().toLowerCase(),
-    Number(item.price),
-  ]);
-  const duplicateIds = new Set();
-  for (const item of catalog.items) {
-    const groups = groupCatalogItem(item);
-    const matches = store.menu.filter((existing) =>
-      catalogKey(existing) === catalogKey(item, groups.category),
-    );
-    if (matches.length) {
-      const keep = matches.find((existing) => existing.photoUrl) || matches[0];
-      Object.assign(keep, groups);
-      keep.photoAltText ||= keep.name;
-      for (const duplicate of matches) {
-        if (duplicate !== keep) duplicateIds.add(duplicate.id);
-      }
-      continue;
+  if (store.menuCatalogVersion < 9) {
+    const catalog = JSON.parse(await fs.readFile(MENU_CATALOG_FILE, "utf8"));
+    if (!Array.isArray(catalog.items)) {
+      throw new Error("The default menu catalog has an invalid structure.");
     }
-    store.menu.push({
-      id: randomBytes(12).toString("hex"),
-      name: item.name,
-      ...groups,
-      description: item.description || "",
-      price: item.price,
-      available: true,
-      photoAltText: item.name,
-    });
+    for (const item of store.menu) {
+      Object.assign(item, groupCatalogItem(item));
+      item.photoAltText ||= item.name;
+    }
+    const catalogKey = (item, category = item.category) => JSON.stringify([
+      category.trim().toLowerCase(),
+      item.name.trim().toLowerCase(),
+      (item.description || "").trim().toLowerCase(),
+      Number(item.price),
+    ]);
+    const duplicateIds = new Set();
+    for (const item of catalog.items) {
+      const groups = groupCatalogItem(item);
+      const matches = store.menu.filter((existing) =>
+        catalogKey(existing) === catalogKey(item, groups.category),
+      );
+      if (matches.length) {
+        const keep = matches.find((existing) => existing.photoUrl) || matches[0];
+        Object.assign(keep, groups);
+        keep.photoAltText ||= keep.name;
+        for (const duplicate of matches) {
+          if (duplicate !== keep) duplicateIds.add(duplicate.id);
+        }
+        continue;
+      }
+      store.menu.push({
+        id: randomBytes(12).toString("hex"),
+        name: item.name,
+        ...groups,
+        description: item.description || "",
+        price: item.price,
+        available: true,
+        photoAltText: item.name,
+      });
+    }
+    store.menu = store.menu.filter((item) => !duplicateIds.has(item.id));
+    store.categories = store.categories.filter((category) =>
+      !["Coffee, Tea & Matcha", "Sisig Rice Meals", "Rice Meal Specials"].includes(category),
+    );
+    store.menuCatalogVersion = 9;
+    await writeStore(store);
   }
-  store.menu = store.menu.filter((item) => !duplicateIds.has(item.id));
-  store.categories = store.categories.filter((category) =>
-    !["Coffee, Tea & Matcha", "Sisig Rice Meals", "Rice Meal Specials"].includes(category),
-  );
-  store.menuCatalogVersion = 9;
-  await writeStore(store);
+
+  const currentStore = await readStore();
+  const sampleCoffees = currentStore.menu.filter((item) =>
+    item.available && ["Coffee", "Frappe", "Matcha & Tea"].includes(item.category),
+  ).slice(0, 2);
+  if (currentStore.orders.length === 0 && sampleCoffees.length === 2) {
+    const demoOrders = sampleCoffees.map((item, index) => ({
+      id: randomBytes(8).toString("hex").toUpperCase(),
+      customerId: `demo_customer_${index + 1}`,
+      customerName: `Demo Customer ${index + 1}`,
+      customerEmail: `demo${index + 1}@example.test`,
+      items: [{
+        id: item.id,
+        name: item.name,
+        description: item.description || "",
+        unitPrice: item.price,
+        quantity: 1,
+        customizations: {
+          size: "12 oz",
+          temperature: "Iced",
+          milk: "Whole milk",
+          sugar: "100%",
+          addons: [],
+        },
+      }],
+      total: item.price,
+      paymentMethod: "gcash",
+      gcashReference: index === 0 ? "1234567890123" : "1234567890124",
+      paymentStatus: "pending",
+      status: "pending_verification",
+      createdAt: new Date(Date.now() - index * 60 * 60 * 1000).toISOString(),
+      receiptPath: null,
+      verifiedAt: null,
+    }));
+    currentStore.orders.unshift(...demoOrders);
+    await writeStore(currentStore);
+  }
 }
 
 initializeMenuCatalog().then(() => {

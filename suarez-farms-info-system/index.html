@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Poppins:wght@400;500;600;700;800&family=Playfair+Display:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="styles.css" />
@@ -28,13 +28,12 @@
         </div>
         <nav class="main-nav" aria-label="Main navigation">
           <a href="#overview">Overview</a>
-          <a href="#menu">Menu &amp; order</a>
-          <a href="#gallery">Photos</a>
-          <a href="#about">About</a>
-          <a href="#contact">Visit</a>
+          <a href="#orders">Orders</a>
+          <a href="#contacts">Contacts</a>
+          <a href="#photos">Photos</a>
         </nav>
         <div class="top-actions">
-          <button id="account-button" class="secondary-btn" type="button">Sign in / Register</button>
+          <a id="account-button" class="secondary-btn" href="#login">Login</a>
           <button id="logout-button" class="secondary-btn" type="button" hidden>Sign out</button>
           <a class="secondary-btn header-icon-link facebook-icon-link" href="https://web.facebook.com/SuarezFarms" target="_blank" rel="noreferrer" aria-label="Visit Suarez Farms on Facebook" title="Facebook">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M13.4 21v-8h2.7l.4-3.1h-3.1v-2c0-.9.3-1.5 1.6-1.5h1.6V3.6c-.3 0-1.3-.1-2.4-.1-2.4 0-4 1.5-4 4.1v2.3H7.5V13h2.7v8z" /></svg>
@@ -46,24 +45,20 @@
       </header>
 
       <main>
-        <section id="overview" class="hero">
+        <section id="overview" class="page-view" data-page-view="overview" aria-label="Overview">
+          <div class="hero">
           <div class="hero-copy">
             <span class="status-pill">A cozy coffee shop in Naujan</span>
-            <h2>Good coffee, fresh air, and a view worth slowing down for.</h2>
+            <h2>Good coffee, fresh air, and a <span class="hero-highlight">view worth slowing down for.</span></h2>
             <p>
               Take a break at Suarez Farms, a cozy café with a relaxing countryside
               atmosphere and breathtaking views of Mount Halcon and the rice fields
               of Oriental Mindoro.
             </p>
             <div class="cta-row">
-              <a class="primary-btn" href="https://maps.google.com/?q=Suarez+Farms+Naujan+Municipal+Road+Naujan+Oriental+Mindoro" target="_blank" rel="noreferrer">Get directions</a>
-              <a class="secondary-btn" href="tel:+639989877203">Call 0998 987 7203</a>
+              <a class="primary-btn" href="#orders">Browse orders</a>
+              <a class="secondary-btn" href="#photos">Explore photos</a>
             </div>
-            <ul class="info-list">
-              <li><span>Address</span><strong>Naujan Municipal Road, Naujan, 5204</strong></li>
-              <li><span>Phone</span><strong>0998 987 7203</strong></li>
-              <li><span>Email</span><strong>suarezfarms.agri@gmail.com</strong></li>
-            </ul>
           </div>
 
           <div class="experience-card">
@@ -76,114 +71,210 @@
             </ul>
             <a href="https://web.facebook.com/SuarezFarms" target="_blank" rel="noreferrer">See the latest on Facebook →</a>
           </div>
+          </div>
+          <section id="about" class="panel about-panel overview-about">
+            <div class="section-heading narrow">
+              <h3>About Suarez Farms</h3>
+            </div>
+            <p>
+              Suarez Farms is a cozy café in Naujan, Oriental Mindoro, made for
+              slowing down, enjoying coffee, and taking in the fresh countryside air.
+            </p>
+          </section>
         </section>
 
-        <section id="menu" class="ordering-section">
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Made fresh at Suarez Farms</p>
-              <h3>Menu &amp; online orders</h3>
-            </div>
-            <p class="order-note">Create a customer account to place an order. GCash is required.</p>
-          </div>
+        <section id="orders" class="page-view" data-page-view="orders" aria-label="Orders" hidden>
           <p id="store-message" class="notice" role="status" aria-live="polite"></p>
-          <div class="menu-intro-heading kiosk-intro">
-            <div>
-              <h4>What would you like today?</h4>
-              <p>Choose a category, then tap an item to add it to your order.</p>
-            </div>
-            <span class="kiosk-price-note">All prices in PHP</span>
-          </div>
-          <div class="store-layout kiosk-layout">
-            <nav id="menu-categories" class="menu-categories" aria-label="Menu categories"></nav>
-            <div id="menu-grid" class="menu-grid" aria-live="polite"></div>
-            <aside class="cart-panel" aria-labelledby="cart-title">
-              <div class="cart-heading">
-                <h4 id="cart-title">Your order</h4>
-                <span id="cart-count" class="cart-count">0 items</span>
-              </div>
-              <div id="cart-items" class="cart-items"></div>
-              <p class="cart-total"><span>Total</span><strong id="cart-total">₱0.00</strong></p>
-              <form id="checkout-form">
-                <fieldset class="payment-choice">
-                  <legend>Required payment method</legend>
-                  <label><input type="radio" name="paymentMethod" value="gcash" required checked /> GCash</label>
-                  <p>Payment instructions will be provided by the shop when your order is confirmed.</p>
-                </fieldset>
-                <label class="field-label" for="gcash-reference">GCash reference (if already paid)</label>
-                <input id="gcash-reference" name="gcashReference" type="text" maxlength="80" placeholder="Optional transaction reference" />
-                <p id="checkout-help" class="checkout-help">Sign in or create a customer account to send your order. Your cart will be kept.</p>
-                <button class="primary-btn checkout-button" type="submit">Place GCash order</button>
-              </form>
-            </aside>
-          </div>
-        </section>
 
-        <section id="order-history" class="admin-section" hidden>
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Customer account</p>
-              <h3>Your recent orders</h3>
-            </div>
-          </div>
-          <div id="customer-orders" class="order-list"></div>
-        </section>
-
-        <section id="admin-dashboard" class="admin-section" hidden>
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Admin workspace</p>
-              <h3>Manage menu &amp; orders</h3>
-            </div>
-          </div>
-          <div class="admin-layout">
-            <section class="panel">
-              <h4 id="menu-form-title">Add a menu item</h4>
-              <form id="menu-form" class="menu-form">
-                <input id="menu-item-id" type="hidden" />
-                <label class="field-label" for="menu-name">Item name</label>
-                <input id="menu-name" name="name" type="text" maxlength="80" required />
-                <label class="field-label" for="menu-category">Category</label>
-                <select id="menu-category" name="category" required>
-                  <option value="">Select a category</option>
-                  <option value="__new__">Create a new category…</option>
-                </select>
-                <label id="menu-new-category-label" class="field-label" for="menu-new-category" hidden>New category name</label>
-                <input id="menu-new-category" name="newCategory" type="text" maxlength="40" placeholder="e.g. Frappe" hidden />
-                <label class="field-label" for="menu-subcategory">Subcategory (optional)</label>
-                <input id="menu-subcategory" name="subcategory" type="text" maxlength="40" placeholder="e.g. Iced Coffee" />
-                <label class="field-label" for="menu-description">Description</label>
-                <textarea id="menu-description" name="description" maxlength="240" rows="3"></textarea>
-                <label class="field-label" for="menu-price">Price (₱)</label>
-                <input id="menu-price" name="price" type="number" min="0.01" max="100000" step="0.01" required />
-                <label class="field-label" for="menu-photo-alt-text">Photo alt text</label>
-                <input id="menu-photo-alt-text" name="photoAltText" type="text" maxlength="160" placeholder="Describe the item photo, or what it should show" />
-                <label class="field-label" for="menu-photo">Item photo</label>
-                <input id="menu-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" />
-                <p class="upload-help">JPG, PNG or WebP · up to 5 MB. Optional.</p>
-                <div id="menu-photo-placeholder" class="menu-photo-placeholder">No photo selected. Add an image here whenever you are ready.</div>
-                <img id="menu-photo-preview" class="menu-photo-preview" alt="Menu item photo preview" hidden />
-                <label id="remove-photo-label" class="checkbox-label" hidden>
-                  <input id="remove-menu-photo" type="checkbox" /> Remove current photo
-                </label>
-                <label class="checkbox-label"><input id="menu-available" type="checkbox" checked /> Available to order</label>
-                <div class="form-actions">
-                  <button class="primary-btn" type="submit">Save menu item</button>
-                  <button id="cancel-menu-edit" class="secondary-btn" type="button" hidden>Cancel edit</button>
+          <div id="customer-storefront">
+            <section id="menu" class="ordering-section">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Made fresh at Suarez Farms</p>
+                  <h3>Order from our menu</h3>
                 </div>
-              </form>
-              <h4 class="subheading">Current menu</h4>
-              <div id="admin-menu-list" class="admin-menu-list"></div>
+                <button id="cart-toggle" class="primary-btn cart-toggle" type="button" aria-controls="cart-panel" aria-expanded="false">
+                  Your cart <span id="cart-count" class="cart-count" aria-live="polite">0 items</span>
+                </button>
+              </div>
+              <div class="menu-intro-heading kiosk-intro">
+                <div>
+                  <h4>What would you like today?</h4>
+                  <p>Browse by group. Your cart stays visible as you add items.</p>
+                </div>
+                <span class="kiosk-price-note">Prices in PHP</span>
+              </div>
+              <div class="store-layout menu-storefront">
+                <nav id="menu-categories" class="menu-categories" aria-label="Menu categories"></nav>
+                <div id="menu-grid" class="menu-grid" aria-live="polite"></div>
+                <aside id="cart-panel" class="cart-drawer" aria-labelledby="cart-title" aria-hidden="true" hidden>
+                  <div class="cart-drawer-header">
+                    <div>
+                      <p class="eyebrow">Your selection</p>
+                      <h2 id="cart-title">Your cart</h2>
+                    </div>
+                    <button id="cart-close" class="dialog-close" type="button" aria-label="Close cart">×</button>
+                  </div>
+                  <div id="cart-items" class="cart-items" aria-live="polite"></div>
+                  <div class="cart-drawer-footer">
+                    <p class="cart-total"><span>Total</span><strong id="cart-total">₱0.00</strong></p>
+                    <button id="checkout-start" class="primary-btn checkout-button" type="button" disabled>Continue to GCash</button>
+                    <p class="checkout-help">GCash only. You will need your 13-digit transaction reference.</p>
+                  </div>
+                </aside>
+              </div>
             </section>
-            <section class="panel">
-              <h4>Incoming orders</h4>
-              <p class="muted-copy">Review GCash references, confirm payments, and update order progress.</p>
-              <div id="admin-orders" class="order-list"></div>
+
+            <section id="order-history" class="admin-section customer-order-history">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Order tracking</p>
+                  <h3>Your orders</h3>
+                </div>
+              </div>
+              <div class="order-history-layout">
+                <section class="panel guest-lookup-panel" aria-labelledby="guest-lookup-title">
+                  <h4 id="guest-lookup-title">Find an order</h4>
+                  <p>Enter the 13-digit GCash reference number used at checkout.</p>
+                  <form id="guest-order-lookup-form" class="lookup-form">
+                    <label class="field-label" for="guest-order-reference">GCash reference number</label>
+                    <input id="guest-order-reference" name="reference" type="text" inputmode="numeric" pattern="[0-9]{13}" maxlength="13" autocomplete="off" required />
+                    <button class="secondary-btn" type="submit">Look up order</button>
+                  </form>
+                  <p id="guest-lookup-message" class="notice" role="status" aria-live="polite"></p>
+                  <div id="guest-order-result" class="guest-order-result"></div>
+                </section>
+                <section id="account-order-history" class="panel" aria-labelledby="account-orders-title" hidden>
+                  <h4 id="account-orders-title">Account order history</h4>
+                  <div id="customer-orders" class="order-list"></div>
+                </section>
+              </div>
             </section>
           </div>
+
+          <section id="admin-dashboard" class="admin-section admin-workspace" hidden>
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Protected workspace</p>
+                <h3>Store management</h3>
+              </div>
+            </div>
+            <div class="admin-kpis" aria-label="Store performance">
+              <article class="panel"><span>Today's revenue</span><strong id="today-revenue">₱0.00</strong></article>
+              <article class="panel"><span>Pending verification</span><strong id="pending-verifications">0</strong></article>
+              <article class="panel"><span>Total orders</span><strong id="total-orders">0</strong></article>
+              <article class="panel"><span>Best-selling item</span><strong id="best-selling-item">—</strong></article>
+            </div>
+
+            <section class="panel gcash-settings-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Payment setup</p>
+                  <h3>GCash merchant details</h3>
+                </div>
+              </div>
+              <form id="gcash-settings-form" class="gcash-settings-form">
+                <div>
+                  <label class="field-label" for="gcash-merchant-name">Merchant name</label>
+                  <input id="gcash-merchant-name" name="merchantName" type="text" maxlength="80" required />
+                </div>
+                <div>
+                  <label class="field-label" for="gcash-merchant-number">GCash number</label>
+                  <input id="gcash-merchant-number" name="merchantNumber" type="tel" inputmode="tel" placeholder="09XXXXXXXXX" />
+                </div>
+                <div>
+                  <label class="field-label" for="gcash-qr-upload">GCash QR image</label>
+                  <input id="gcash-qr-upload" name="qrImage" type="file" accept="image/jpeg,image/png,image/webp" />
+                </div>
+                <img id="gcash-qr-preview" class="gcash-qr-preview" alt="GCash QR preview" hidden />
+                <button class="primary-btn" type="submit">Save payment details</button>
+                <p id="gcash-settings-message" class="notice" role="status" aria-live="polite"></p>
+              </form>
+            </section>
+
+            <section class="panel admin-orders-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Transactions</p>
+                  <h3>Incoming orders</h3>
+                </div>
+              </div>
+              <div class="admin-order-filters">
+                <label class="field-label" for="admin-order-search">Search orders</label>
+                <input id="admin-order-search" type="search" placeholder="Customer, order ID, or GCash reference" />
+                <label class="field-label" for="admin-order-status-filter">Order status</label>
+                <select id="admin-order-status-filter">
+                  <option value="">All statuses</option>
+                  <option value="pending_verification">Pending Verification</option>
+                  <option value="received">Received</option>
+                  <option value="preparing">Preparing</option>
+                  <option value="ready">Ready</option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <label class="field-label" for="admin-payment-filter">Payment</label>
+                <select id="admin-payment-filter">
+                  <option value="">All payments</option>
+                  <option value="pending">Pending</option>
+                  <option value="paid">Verified</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+              </div>
+              <div class="admin-table-wrap">
+                <table class="admin-orders-table">
+                  <thead>
+                    <tr><th>Order / Customer</th><th>Items</th><th>Total</th><th>GCash reference</th><th>Status / action</th></tr>
+                  </thead>
+                  <tbody id="admin-orders"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <div class="admin-layout">
+              <section class="panel">
+                <h4 id="menu-form-title">Add a menu item</h4>
+                <form id="menu-form" class="menu-form">
+                  <input id="menu-item-id" type="hidden" />
+                  <label class="field-label" for="menu-name">Item name</label>
+                  <input id="menu-name" name="name" type="text" maxlength="80" required />
+                  <label class="field-label" for="menu-category">Category</label>
+                  <select id="menu-category" name="category" required>
+                    <option value="">Select a category</option>
+                    <option value="__new__">Create a new category…</option>
+                  </select>
+                  <label id="menu-new-category-label" class="field-label" for="menu-new-category" hidden>New category name</label>
+                  <input id="menu-new-category" name="newCategory" type="text" maxlength="40" placeholder="e.g. Frappe" hidden />
+                  <label class="field-label" for="menu-subcategory">Subcategory (optional)</label>
+                  <input id="menu-subcategory" name="subcategory" type="text" maxlength="40" placeholder="e.g. Iced Coffee" />
+                  <label class="field-label" for="menu-description">Description</label>
+                  <textarea id="menu-description" name="description" maxlength="240" rows="3"></textarea>
+                  <label class="field-label" for="menu-price">Price (₱)</label>
+                  <input id="menu-price" name="price" type="number" min="0.01" max="100000" step="0.01" required />
+                  <label class="field-label" for="menu-photo-alt-text">Photo alt text</label>
+                  <input id="menu-photo-alt-text" name="photoAltText" type="text" maxlength="160" placeholder="Describe the item photo" />
+                  <label class="field-label" for="menu-photo">Item photo</label>
+                  <input id="menu-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" />
+                  <p class="upload-help">JPG, PNG or WebP · up to 5 MB. Optional.</p>
+                  <div id="menu-photo-placeholder" class="menu-photo-placeholder">No photo selected. Add an image here whenever you are ready.</div>
+                  <img id="menu-photo-preview" class="menu-photo-preview" alt="Menu item photo preview" hidden />
+                  <label id="remove-photo-label" class="checkbox-label" hidden>
+                    <input id="remove-menu-photo" type="checkbox" /> Remove current photo
+                  </label>
+                  <label class="checkbox-label"><input id="menu-available" type="checkbox" checked /> In stock</label>
+                  <div class="form-actions">
+                    <button class="primary-btn" type="submit">Save menu item</button>
+                    <button id="cancel-menu-edit" class="secondary-btn" type="button" hidden>Cancel edit</button>
+                  </div>
+                </form>
+                <h4 class="subheading">Current menu</h4>
+                <div id="admin-menu-list" class="admin-menu-list"></div>
+              </section>
+            </div>
+          </section>
         </section>
 
-        <section id="gallery" class="gallery" aria-label="Suarez Farms photos">
+        <section id="photos" class="page-view" data-page-view="photos" aria-label="Suarez Farms photos" hidden>
+          <section id="gallery" class="gallery">
           <div class="section-heading">
             <h3>Get a glimpse of Suarez Farms</h3>
             <a class="ghost-btn" href="https://web.facebook.com/SuarezFarms/photos" target="_blank" rel="noreferrer">More photos on Facebook</a>
@@ -199,20 +290,10 @@
               <img src="assets/suarez-farms-4.jpg" alt="Suarez Farms signature green iced drink with cream" loading="lazy" />
             </a>
           </div>
+          </section>
         </section>
 
-        <section id="about" class="info-panels">
-          <div class="panel about-panel">
-            <div class="section-heading narrow">
-              <h3>About</h3>
-            </div>
-            <p>
-              Suarez Farms is a cozy café in Naujan, Oriental Mindoro, made for
-              slowing down, enjoying coffee, and taking in the fresh countryside air.
-            </p>
-            
-          </div>
-
+        <section id="contacts" class="page-view" data-page-view="contacts" aria-label="Contact information" hidden>
           <div id="contact" class="panel contact-panel">
             <div class="section-heading narrow">
               <h3>Plan your visit</h3>
@@ -221,6 +302,7 @@
               <li>
                 <span class="label">Address</span>
                 <strong>Naujan Municipal Road, Naujan, 5204 Naujan, Philippines</strong>
+                <a href="https://maps.google.com/?q=Suarez+Farms+Naujan+Municipal+Road+Naujan+Oriental+Mindoro" target="_blank" rel="noreferrer">Get directions</a>
               </li>
               <li>
                 <span class="label">Hours</span>
@@ -242,44 +324,130 @@
           </div>
         </section>
 
+        <section id="login" class="page-view login-page" data-page-view="login" aria-label="Login" hidden>
+          <div class="login-panel panel">
+            <p class="eyebrow">Suarez Farms ordering</p>
+            <h2 id="auth-title">Sign in</h2>
+            <div class="auth-role-switch" aria-label="Choose account type">
+              <button class="auth-role active" type="button" data-role="customer">Customer</button>
+              <button class="auth-role" type="button" data-role="admin">Admin</button>
+            </div>
+            <button id="register-toggle" class="text-button" type="button">New here? Create a customer account</button>
+            <form id="auth-form" class="auth-form">
+              <label id="name-label" class="field-label" for="auth-name" hidden>Your name</label>
+              <input id="auth-name" name="name" type="text" maxlength="80" autocomplete="name" placeholder="Your name" hidden />
+              <label id="email-label" class="field-label" for="auth-email">Email</label>
+              <input id="auth-email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="you@example.com" required />
+              <label id="username-label" class="field-label" for="auth-username" hidden>Admin username</label>
+              <input id="auth-username" name="username" type="text" autocomplete="username" placeholder="Admin username" hidden />
+              <label class="field-label" for="auth-password">Password</label>
+              <input id="auth-password" name="password" type="password" maxlength="128" autocomplete="current-password" required />
+              <button class="primary-btn auth-submit" type="submit">Sign in</button>
+            </form>
+            <p id="auth-message" class="notice" role="alert" aria-live="polite"></p>
+          </div>
+        </section>
+
       </main>
 
       <footer class="site-footer">
-        <p>© <span id="year"></span> Suarez Farms · <a href="https://web.facebook.com/SuarezFarms" target="_blank" rel="noreferrer">Photos and profile details from Facebook</a></p>
+        <div class="footer-content">
+          <section class="footer-brand" aria-label="About Suarez Farms">
+            <img class="footer-logo" src="assets/suarez-farms-logo.jpg" alt="" />
+            <h2>Suarez Farms</h2>
+            <p>A cozy café in Naujan, Oriental Mindoro. Good coffee, fresh air, and a view worth slowing down for.</p>
+            <a class="footer-social-link" href="https://web.facebook.com/SuarezFarms" target="_blank" rel="noreferrer">Visit us on Facebook</a>
+          </section>
+
+          <nav class="footer-links" aria-label="Footer navigation">
+            <h3 class="footer-heading">Explore</h3>
+            <a href="#overview">Overview</a>
+            <a href="#orders">Orders</a>
+            <a href="#contacts">Contacts</a>
+            <a href="#photos">Photos</a>
+          </nav>
+
+          <section class="footer-contact" aria-labelledby="footer-contact-title">
+            <h3 id="footer-contact-title" class="footer-heading">Contact</h3>
+            <p><span>Address</span><a href="https://maps.google.com/?q=Suarez+Farms+Naujan+Municipal+Road+Naujan+Oriental+Mindoro" target="_blank" rel="noreferrer">Naujan Municipal Road, Naujan, Oriental Mindoro</a></p>
+            <p><span>Phone</span><a href="tel:+639989877203">0998 987 7203</a></p>
+            <p><span>Email</span><a href="mailto:suarezfarms.agri@gmail.com">suarezfarms.agri@gmail.com</a></p>
+            <p><span>Hours</span><a href="https://web.facebook.com/SuarezFarms" target="_blank" rel="noreferrer">Check current hours on Facebook</a></p>
+          </section>
+
+          <section class="footer-map" aria-labelledby="footer-map-title">
+            <h3 id="footer-map-title" class="footer-heading">Find us</h3>
+            <iframe
+              title="Google Maps location for Suarez Farms in Naujan, Oriental Mindoro"
+              src="https://maps.google.com/maps?q=Suarez+Farms+Naujan+Municipal+Road+Naujan+Oriental+Mindoro&amp;z=15&amp;output=embed"
+              loading="lazy"
+              referrerpolicy="no-referrer-when-downgrade"
+            ></iframe>
+            <a class="footer-map-link" href="https://maps.google.com/?q=Suarez+Farms+Naujan+Municipal+Road+Naujan+Oriental+Mindoro" target="_blank" rel="noreferrer">Open in Google Maps</a>
+          </section>
+        </div>
+        <div class="footer-bottom">
+          <p>© <span id="year"></span> Suarez Farms · Photos and profile details from Facebook</p>
+        </div>
       </footer>
     </div>
 
-    <dialog id="auth-dialog" class="auth-dialog" aria-labelledby="auth-title">
+    <dialog id="product-dialog" class="auth-dialog shop-dialog" aria-labelledby="product-dialog-title">
       <div class="auth-dialog-content">
-        <button id="auth-close" class="dialog-close" type="button" aria-label="Close sign in">×</button>
-        <p class="eyebrow">Suarez Farms ordering</p>
-        <h2 id="auth-title">Sign in</h2>
-        <div class="auth-role-switch" aria-label="Choose account type">
-          <button class="auth-role active" type="button" data-role="customer">Customer</button>
-          <button class="auth-role" type="button" data-role="admin">Admin</button>
+        <button id="product-dialog-close" class="dialog-close" type="button" aria-label="Close customization">×</button>
+        <p class="eyebrow">Make it yours</p>
+        <h2 id="product-dialog-title">Customize your drink</h2>
+        <p id="product-dialog-description" class="muted-copy"></p>
+        <div id="product-options" class="product-options"></div>
+        <p class="customization-price-note">Size, milk, temperature, and sugar choices are included. Add-ons change the price.</p>
+        <div class="customization-actions">
+          <label class="field-label" for="customization-quantity">Quantity</label>
+          <input id="customization-quantity" type="number" min="1" max="20" value="1" />
+          <button id="customization-add" class="primary-btn" type="button">Add to cart</button>
         </div>
-        <button id="register-toggle" class="text-button" type="button">New here? Create a customer account</button>
-        <form id="auth-form" class="auth-form">
-          <label id="name-label" class="field-label" for="auth-name" hidden>Your name</label>
-          <input id="auth-name" name="name" type="text" maxlength="80" autocomplete="name" placeholder="Your name" hidden />
-          <label id="email-label" class="field-label" for="auth-email">Email</label>
-          <input id="auth-email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="you@example.com" required />
-          <label id="username-label" class="field-label" for="auth-username" hidden>Admin username</label>
-          <input id="auth-username" name="username" type="text" autocomplete="username" placeholder="Admin username" hidden />
-          <label class="field-label" for="auth-password">Password</label>
-          <input id="auth-password" name="password" type="password" maxlength="128" autocomplete="current-password" required />
-          <button class="primary-btn auth-submit" type="submit">Sign in</button>
+      </div>
+    </dialog>
+
+    <dialog id="payment-dialog" class="auth-dialog payment-dialog" aria-labelledby="payment-title">
+      <div class="auth-dialog-content">
+        <button id="payment-close" class="dialog-close" type="button" aria-label="Close GCash checkout">×</button>
+        <p class="eyebrow">Secure checkout</p>
+        <h2 id="payment-title">Pay with GCash</h2>
+        <div class="payment-instructions">
+          <img id="checkout-gcash-qr" class="checkout-gcash-qr" alt="Suarez Farms GCash QR code" hidden />
+          <p id="gcash-config-message" class="notice" role="status"></p>
+          <p><span>Pay to</span><strong id="gcash-merchant-display">Suarez Farms</strong></p>
+          <p><span>GCash number</span><strong id="gcash-number-display">Not configured</strong></p>
+          <p class="payment-amount"><span>Exact amount</span><strong id="payment-amount">₱0.00</strong></p>
+        </div>
+        <form id="checkout-form" class="auth-form">
+          <div id="guest-customer-fields" class="guest-customer-fields">
+            <p class="muted-copy">Continue as a guest, or sign in first to save orders to your account.</p>
+            <label class="field-label" for="guest-customer-name">Your name</label>
+            <input id="guest-customer-name" name="customerName" type="text" maxlength="80" autocomplete="name" />
+            <label class="field-label" for="guest-customer-email">Email</label>
+            <input id="guest-customer-email" name="customerEmail" type="email" maxlength="254" autocomplete="email" />
+          </div>
+          <label class="field-label" for="gcash-reference">13-digit GCash reference number</label>
+          <input id="gcash-reference" name="gcashReference" type="text" inputmode="numeric" pattern="[0-9]{13}" maxlength="13" autocomplete="off" required />
+          <label class="field-label" for="receipt-upload">Payment receipt screenshot (optional)</label>
+          <input id="receipt-upload" name="receiptImage" type="file" accept="image/jpeg,image/png,image/webp" />
+          <img id="receipt-preview" class="receipt-preview" alt="Payment receipt preview" hidden />
+          <p class="upload-help">JPG, PNG or WebP · up to 5 MB.</p>
+          <p id="checkout-help" class="checkout-help">Your order will be saved as Pending Verification until the shop confirms payment.</p>
+          <p id="checkout-message" class="notice" role="alert" aria-live="polite"></p>
+          <button class="primary-btn checkout-button" type="submit">Submit GCash payment</button>
         </form>
-        <p id="auth-message" class="notice" role="alert" aria-live="polite"></p>
       </div>
     </dialog>
 
     <dialog id="order-confirmation-dialog" class="auth-dialog order-confirmation-dialog" aria-labelledby="order-confirmation-title">
       <div class="auth-dialog-content">
-        <p class="eyebrow">Suarez Farms ordering</p>
-        <h2 id="order-confirmation-title">Order received!</h2>
+        <p class="eyebrow">Digital receipt</p>
+        <h2 id="order-confirmation-title">Payment submitted</h2>
         <p id="order-confirmation-message" class="order-confirmation-message"></p>
-        <button id="order-confirmation-close" class="primary-btn" type="button">Continue browsing</button>
+        <div id="digital-receipt" class="digital-receipt"></div>
+        <button id="order-confirmation-close" class="primary-btn" type="button">Return to Shop</button>
       </div>
     </dialog>
 
