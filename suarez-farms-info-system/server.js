@@ -12,7 +12,6 @@ const ROOT = __dirname;
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, "data");
 const DATA_FILE = path.join(DATA_DIR, "store.json");
 const DATABASE_FILE = path.join(DATA_DIR, "store.sqlite");
-const MENU_CATALOG_FILE = path.join(ROOT, "menu-catalog.json");
 const MENU_PHOTO_DIR = path.join(DATA_DIR, "menu-photos");
 const ORDER_RECEIPT_DIR = path.join(DATA_DIR, "order-receipts");
 const PAYMENT_ASSET_DIR = path.join(DATA_DIR, "payment-assets");
@@ -1858,177 +1857,27 @@ async function handleRequest(request, response) {
   sendError(response, 404, "API endpoint not found.");
 }
 
-function groupCatalogItem(item) {
-  const originalCategory = item.category || "Other";
-  const name = item.name.trim().toLowerCase();
-  const description = (item.description || "").trim().toLowerCase();
-
-  if (originalCategory === "Fried Chicken") {
-    if (name.includes("rice bowl") || name.includes("with rice")) {
-      return { category: "Rice Meals", subcategory: "Chicken Rice Meals" };
-    }
-    if (name.includes("mini fried")) return { category: originalCategory, subcategory: "Mini Fried Chicken" };
-    return { category: originalCategory, subcategory: "Fried Chicken" };
-  }
-  if (originalCategory === "Rice Meals") {
-    if (name.startsWith("sisig")) {
-      return {
-        category: "Rice Meals",
-        subcategory: name.includes("sharing") ? "Sisig Sharing" : "Sisig Meals",
-      };
-    }
-    return { category: "Rice Meals", subcategory: "Special Rice Meals" };
-  }
-  if (originalCategory === "Sisig Rice Meals" || originalCategory === "Rice Meal Specials") {
-    return {
-      category: "Rice Meals",
-      subcategory: name.includes("sisig")
-        ? name.includes("sharing") ? "Sisig Sharing" : "Sisig Meals"
-        : "Special Rice Meals",
-    };
-  }
-  if (originalCategory === "Drinks") {
-    return {
-      category: "Soda & Juices",
-      subcategory: name.includes("soda pop") ? "Soda Pop (16 oz)" : "Juices (16 oz)",
-    };
-  }
-  if (["Iced Coffee", "Hot Coffee"].includes(originalCategory)) {
-    return { category: "Coffee", subcategory: originalCategory };
-  }
-  if (["Iced Milk", "Hot Milk"].includes(originalCategory)) {
-    return { category: "Milk Drinks", subcategory: originalCategory };
-  }
-  if (originalCategory === "Frappes") {
-    return { category: "Frappe", subcategory: "Frappes" };
-  }
-  if (originalCategory === "Matcha") {
-    return { category: "Matcha & Tea", subcategory: "Matcha" };
-  }
-  if (originalCategory === "Coffee, Tea & Matcha") {
-    if (item.subcategory === "Frappes") return { category: "Frappe", subcategory: "Frappes" };
-    if (item.subcategory === "Matcha") return { category: "Matcha & Tea", subcategory: "Matcha" };
-    if (item.subcategory === "Iced Milk" || item.subcategory === "Hot Milk") {
-      return { category: "Milk Drinks", subcategory: item.subcategory };
-    }
-    return { category: "Coffee", subcategory: item.subcategory || "Coffee" };
-  }
-  if (originalCategory === "Desserts") {
-    return {
-      category: originalCategory,
-      subcategory: name.includes("croffle") ? "Croffles" : "Premium Ube Halo-Halo",
-    };
-  }
-  if (originalCategory === "Pasta") {
-    return { category: originalCategory, subcategory: "Pasta" };
-  }
-  if (originalCategory === "Kimchi Series") {
-    return {
-      category: originalCategory,
-      subcategory: name.includes("ramen") ? "Kimchi Ramen" : "Kimchi Stew",
-    };
-  }
-  if (originalCategory === "Appetizers") {
-    return {
-      category: originalCategory,
-      subcategory: name.includes("fries") ? "French Fries" : "Nachos Overload",
-    };
-  }
-  if (originalCategory === "Other" &&
-    (name.includes("americano") || /coffee|tea|matcha/.test(description))) {
-    return { category: "Coffee", subcategory: "Coffee" };
-  }
-  return { category: originalCategory, subcategory: item.subcategory || "" };
+function isDemoOrder(order) {
+  return (
+    (order.customerId === "demo_customer_1" &&
+      order.customerEmail === "demo1@example.test" &&
+      order.gcashReference === "1234567890123") ||
+    (order.customerId === "demo_customer_2" &&
+      order.customerEmail === "demo2@example.test" &&
+      order.gcashReference === "1234567890124")
+  );
 }
 
-async function initializeMenuCatalog() {
+async function initializeStore() {
   await initializeDatabase();
   const store = await readStore();
-  if (store.menuCatalogVersion < 9) {
-    const catalog = JSON.parse(await fs.readFile(MENU_CATALOG_FILE, "utf8"));
-    if (!Array.isArray(catalog.items)) {
-      throw new Error("The default menu catalog has an invalid structure.");
-    }
+  if (store.menuCatalogVersion < 10) {
     await updateStore((currentStore) => {
-      if (currentStore.menuCatalogVersion >= 9) return;
-      for (const item of currentStore.menu) {
-        Object.assign(item, groupCatalogItem(item));
-        item.photoAltText ||= item.name;
-      }
-      const catalogKey = (item, category = item.category) => JSON.stringify([
-        category.trim().toLowerCase(),
-        item.name.trim().toLowerCase(),
-        (item.description || "").trim().toLowerCase(),
-        Number(item.price),
-      ]);
-      const duplicateIds = new Set();
-      for (const item of catalog.items) {
-        const groups = groupCatalogItem(item);
-        const matches = currentStore.menu.filter((existing) =>
-          catalogKey(existing) === catalogKey(item, groups.category),
-        );
-        if (matches.length) {
-          const keep = matches.find((existing) => existing.photoUrl) || matches[0];
-          Object.assign(keep, groups);
-          keep.photoAltText ||= keep.name;
-          for (const duplicate of matches) {
-            if (duplicate !== keep) duplicateIds.add(duplicate.id);
-          }
-          continue;
-        }
-        currentStore.menu.push({
-          id: randomBytes(12).toString("hex"),
-          name: item.name,
-          ...groups,
-          description: item.description || "",
-          price: item.price,
-          available: true,
-          photoAltText: item.name,
-        });
-      }
-      currentStore.menu = currentStore.menu.filter((item) => !duplicateIds.has(item.id));
-      currentStore.categories = currentStore.categories.filter((category) =>
-        !["Coffee, Tea & Matcha", "Sisig Rice Meals", "Rice Meal Specials"].includes(category),
-      );
-      currentStore.menuCatalogVersion = 9;
-    });
-  }
-
-  const currentStore = await readStore();
-  const sampleCoffees = currentStore.menu.filter((item) =>
-    item.available && ["Coffee", "Frappe", "Matcha & Tea"].includes(item.category),
-  ).slice(0, 2);
-  if (currentStore.orders.length === 0 && sampleCoffees.length === 2) {
-    const demoOrders = sampleCoffees.map((item, index) => ({
-      id: randomBytes(8).toString("hex").toUpperCase(),
-      customerId: `demo_customer_${index + 1}`,
-      customerName: `Demo Customer ${index + 1}`,
-      customerEmail: `demo${index + 1}@example.test`,
-      items: [{
-        id: item.id,
-        name: item.name,
-        description: item.description || "",
-        unitPrice: item.price,
-        quantity: 1,
-        customizations: {
-          size: "12 oz",
-          temperature: "Iced",
-          milk: "Whole milk",
-          sugar: "100%",
-          addons: [],
-        },
-      }],
-      total: item.price,
-      paymentMethod: "gcash",
-      gcashReference: index === 0 ? "1234567890123" : "1234567890124",
-      paymentStatus: "pending",
-      status: "pending_verification",
-      createdAt: new Date(Date.now() - index * 60 * 60 * 1000).toISOString(),
-      receiptPath: null,
-      verifiedAt: null,
-    }));
-    await updateStore((latestStore) => {
-      if (latestStore.orders.length === 0) latestStore.orders.unshift(...demoOrders);
+      if (currentStore.menuCatalogVersion >= 10) return;
+      currentStore.menu = [];
+      currentStore.categories = [];
+      currentStore.orders = currentStore.orders.filter((order) => !isDemoOrder(order));
+      currentStore.menuCatalogVersion = 10;
     });
   }
 }
@@ -2037,7 +1886,7 @@ let initializationPromise;
 
 async function ensureInitialized() {
   if (!initializationPromise) {
-    initializationPromise = initializeMenuCatalog();
+    initializationPromise = initializeStore();
   }
   try {
     await initializationPromise;

@@ -1,7 +1,4 @@
 {
-  "functions": {
-    "api/[...path].js": {
-      "includeFiles": "menu-catalog.json"
-    }
-  }
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "outputDirectory": "."
 }
