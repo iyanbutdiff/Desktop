@@ -22,7 +22,7 @@ The Vercel deployment uses Supabase instead of local SQLite. The app persists it
 
 1. Create a Supabase project.
 2. In the Supabase **SQL Editor**, run the contents of `supabase-schema.sql`.
-3. In the Vercel project settings, set **Root Directory** to `suarez-farms-info-system`, the production branch to `master`, and leave the **Output Directory** unset so `vercel.json` can publish the project-root page and assets.
+3. In the Vercel project settings, set **Root Directory** to `suarez-farms-info-system`, the production branch to `master`, and leave the **Output Directory** unset so `vercel.json` can publish the project-root page and assets. The Vercel function also bundles `assets/` so it can serve the dynamically addressed images.
 4. Add these Vercel **Environment Variables** for Production:
    - `SUPABASE_URL`: the project URL from Supabase **Project Settings → API**.
    - `SUPABASE_SERVICE_ROLE_KEY`: the service-role key from that page. Keep it server-only; never add it to browser code or commit it.
