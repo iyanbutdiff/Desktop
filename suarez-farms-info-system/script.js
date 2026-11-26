@@ -468,6 +468,26 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  async function uploadImageFile(file, kind) {
+    const ticket = await api("/api/uploads/sign", {
+      method: "POST",
+      body: JSON.stringify({ kind, contentType: file.type, size: file.size }),
+    });
+    if (!ticket.directUploads) return fileAsDataUrl(file);
+    const response = await fetch(ticket.uploadUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Type": file.type,
+      },
+      body: file,
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`Image upload failed (${response.status}): ${detail}`);
+    }
+    return ticket.objectPath;
+  }
+
   function renderOrder(order, adminView) {
     const lines = order.items.map((item) => {
       const custom = item.customizations || {};
@@ -900,7 +920,7 @@ document.addEventListener("DOMContentLoaded", () => {
     checkoutButton.disabled = true;
     checkoutButton.textContent = "Submitting payment...";
     try {
-      if (receiptFile) payload.receiptImage = await fileAsDataUrl(receiptFile);
+      if (receiptFile) payload.receiptImage = await uploadImageFile(receiptFile, "receipt");
       const result = await api("/api/orders", {
         method: "POST",
         body: JSON.stringify(payload),
@@ -977,18 +997,7 @@ document.addEventListener("DOMContentLoaded", () => {
         removePhoto: removeMenuPhoto.checked,
       };
       if (selectedPhoto) {
-        payload.photo = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.addEventListener("load", () => {
-            if (typeof reader.result !== "string") {
-              reject(new Error("Could not read the selected photo."));
-              return;
-            }
-            resolve(reader.result);
-          }, { once: true });
-          reader.addEventListener("error", () => reject(new Error("Could not read the selected photo.")), { once: true });
-          reader.readAsDataURL(selectedPhoto);
-        });
+        payload.photo = await uploadImageFile(selectedPhoto, "menu-photo");
         payload.removePhoto = false;
       }
       await api(id ? `/api/admin/menu/${id}` : "/api/admin/menu", {
@@ -1160,7 +1169,7 @@ document.addEventListener("DOMContentLoaded", () => {
       merchantNumber: document.getElementById("gcash-merchant-number").value.trim(),
     };
     try {
-      if (file) payload.qrImage = await fileAsDataUrl(file);
+      if (file) payload.qrImage = await uploadImageFile(file, "payment-qr");
       const config = await api("/api/admin/settings/gcash", {
         method: "PUT",
         body: JSON.stringify(payload),

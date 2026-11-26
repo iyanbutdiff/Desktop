@@ -2,11 +2,11 @@ const http = require("node:http");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const {
+  createHash,
   randomBytes,
   scryptSync,
   timingSafeEqual,
 } = require("node:crypto");
-const { DatabaseSync } = require("node:sqlite");
 
 const ROOT = __dirname;
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, "data");
@@ -16,8 +16,14 @@ const MENU_CATALOG_FILE = path.join(ROOT, "menu-catalog.json");
 const MENU_PHOTO_DIR = path.join(DATA_DIR, "menu-photos");
 const ORDER_RECEIPT_DIR = path.join(DATA_DIR, "order-receipts");
 const PAYMENT_ASSET_DIR = path.join(DATA_DIR, "payment-assets");
-const sessions = new Map();
+const SUPABASE_URL = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const STATE_TABLE = "suarez_farms_state";
+const PUBLIC_BUCKET = "suarez-farms-public";
+const PRIVATE_BUCKET = "suarez-farms-private";
 const lookupAttempts = new Map();
+const localSessions = new Map();
+let DatabaseSync;
 let database;
 
 function loadEnvironment() {
@@ -72,26 +78,35 @@ function sendError(response, statusCode, message) {
 }
 
 async function readJson(request) {
-  const chunks = [];
-  let size = 0;
+  let body = request.body;
+  if (body === undefined) {
+    const chunks = [];
+    let size = 0;
 
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > 8 * 1024 * 1024) {
-      const error = new Error("Request body is too large.");
-      error.statusCode = 413;
+    for await (const chunk of request) {
+      size += chunk.length;
+      if (size > 8 * 1024 * 1024) {
+        const error = new Error("Request body is too large.");
+        error.statusCode = 413;
+        throw error;
+      }
+      chunks.push(chunk);
+    }
+    try {
+      body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch {
+      const error = new Error("Request body must be valid JSON.");
+      error.statusCode = 400;
       throw error;
     }
-    chunks.push(chunk);
-  }
-
-  let body;
-  try {
-    body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch {
-    const error = new Error("Request body must be valid JSON.");
-    error.statusCode = 400;
-    throw error;
+  } else if (typeof body === "string" || Buffer.isBuffer(body)) {
+    try {
+      body = JSON.parse(body.toString());
+    } catch {
+      const error = new Error("Request body must be valid JSON.");
+      error.statusCode = 400;
+      throw error;
+    }
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     const error = new Error("Request body must be a JSON object.");
@@ -101,7 +116,148 @@ async function readJson(request) {
   return body;
 }
 
-function readStore() {
+function isSupabaseMode() {
+  return Boolean(process.env.VERCEL || SUPABASE_URL || SUPABASE_SERVICE_ROLE_KEY);
+}
+
+function stateEndpoint(query = "") {
+  return `/rest/v1/${STATE_TABLE}${query}`;
+}
+
+async function supabaseRequest(endpoint, options = {}) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the deployment environment.");
+  }
+  const response = await fetch(`${SUPABASE_URL}${endpoint}`, {
+    ...options,
+    headers: {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...options.headers,
+    },
+  });
+  const text = await response.text();
+  let payload = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = text;
+    }
+  }
+  if (!response.ok) {
+    const detail = typeof payload === "string"
+      ? payload
+      : payload?.message || payload?.error || response.statusText;
+    const error = new Error(`Supabase request failed (${response.status}): ${detail}`);
+    error.statusCode = 502;
+    throw error;
+  }
+  return payload;
+}
+
+function emptyStore() {
+  return {
+    users: [],
+    menu: [],
+    orders: [],
+    categories: [],
+    addons: [
+      { id: "espresso-shot", name: "Extra espresso shot", price: 25, available: true },
+      { id: "oat-milk", name: "Oat milk", price: 20, available: true },
+      { id: "caramel-syrup", name: "Caramel syrup", price: 15, available: true },
+      { id: "vanilla-syrup", name: "Vanilla syrup", price: 15, available: true },
+      { id: "whipped-cream", name: "Whipped cream", price: 20, available: true },
+    ],
+    settings: {
+      gcash_merchant_name: process.env.GCASH_MERCHANT_NAME || "Suarez Farms",
+      gcash_merchant_number: process.env.GCASH_MERCHANT_NUMBER || "",
+    },
+    sessions: [],
+    menuCatalogVersion: 0,
+  };
+}
+
+function addStoreRevision(store, revision) {
+  Object.defineProperty(store, "__revision", {
+    configurable: true,
+    value: Number(revision),
+    writable: true,
+  });
+  return store;
+}
+
+async function readSupabaseStore() {
+  const rows = await supabaseRequest(stateEndpoint("?id=eq.main&select=revision,state"));
+  if (!Array.isArray(rows) || !rows.length) {
+    throw new Error("The Supabase state row is missing. Run supabase-schema.sql in the Supabase SQL Editor.");
+  }
+  const row = rows[0];
+  if (!row.state || typeof row.state !== "object" || Array.isArray(row.state)) {
+    throw new Error("The Supabase application state has an invalid structure.");
+  }
+  return addStoreRevision({
+    ...emptyStore(),
+    ...row.state,
+    users: Array.isArray(row.state.users) ? row.state.users : [],
+    menu: Array.isArray(row.state.menu) ? row.state.menu : [],
+    orders: Array.isArray(row.state.orders) ? row.state.orders : [],
+    categories: Array.isArray(row.state.categories) ? row.state.categories : [],
+    addons: Array.isArray(row.state.addons) ? row.state.addons : [],
+    settings: row.state.settings && typeof row.state.settings === "object"
+      ? row.state.settings
+      : {},
+    sessions: Array.isArray(row.state.sessions) ? row.state.sessions : [],
+  }, row.revision);
+}
+
+async function writeSupabaseStore(store) {
+  const revision = store.__revision;
+  if (!Number.isInteger(revision)) {
+    throw new Error("Cannot save application state without its Supabase revision.");
+  }
+  const categoryNames = new Map();
+  for (const name of [
+    ...(Array.isArray(store.categories) ? store.categories : []),
+    ...store.menu.map((item) => item.category || "Other"),
+  ]) {
+    if (typeof name === "string" && name.trim()) {
+      const trimmedName = name.trim();
+      categoryNames.set(trimmedName.toLocaleLowerCase(), trimmedName);
+    }
+  }
+  store.categories = [...categoryNames.values()];
+  const rows = await supabaseRequest(
+    stateEndpoint(`?id=eq.main&revision=eq.${revision}&select=revision`),
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ revision: revision + 1, state: store }),
+    },
+  );
+  if (!Array.isArray(rows) || rows.length === 0) return false;
+  store.__revision = revision + 1;
+  return true;
+}
+
+async function initializeSupabase() {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Vercel Environment Variables.");
+  }
+  const rows = await supabaseRequest(stateEndpoint("?id=eq.main&select=id"));
+  if (!Array.isArray(rows) || rows.length === 0) {
+    await supabaseRequest(stateEndpoint("?on_conflict=id"), {
+      method: "POST",
+      headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
+      body: JSON.stringify([{ id: "main", revision: 0, state: emptyStore() }]),
+    });
+  }
+  await readSupabaseStore();
+}
+
+async function readStore() {
+  if (isSupabaseMode()) return readSupabaseStore();
   if (!database) throw new Error("The store database has not been initialized.");
 
   const users = database.prepare(`
@@ -194,7 +350,8 @@ function readStore() {
   };
 }
 
-function writeStore(store) {
+async function writeStore(store) {
+  if (isSupabaseMode()) return writeSupabaseStore(store);
   if (!database) throw new Error("The store database has not been initialized.");
 
   const categoryNames = new Map();
@@ -309,6 +466,7 @@ function writeStore(store) {
       }
     }
     database.exec("COMMIT");
+    return true;
   } catch (error) {
     database.exec("ROLLBACK");
     throw error;
@@ -316,6 +474,11 @@ function writeStore(store) {
 }
 
 async function initializeDatabase() {
+  if (isSupabaseMode()) {
+    await initializeSupabase();
+    return;
+  }
+  ({ DatabaseSync } = require("node:sqlite"));
   await fs.mkdir(DATA_DIR, { recursive: true });
   database = new DatabaseSync(DATABASE_FILE);
   database.exec(`
@@ -439,7 +602,7 @@ async function initializeDatabase() {
   ) {
     throw new Error("Stored data has an invalid structure.");
   }
-  writeStore(initialStore);
+  await writeStore(initialStore);
   database.prepare(
     "INSERT INTO app_metadata (key, value) VALUES ('legacy_json_imported', '1')",
   ).run();
@@ -449,10 +612,14 @@ let storeMutationQueue = Promise.resolve();
 
 function updateStore(mutator) {
   const operation = storeMutationQueue.then(async () => {
-    const store = await readStore();
-    const result = await mutator(store);
-    await writeStore(store);
-    return result;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const store = await readStore();
+      const result = await mutator(store);
+      if (await writeStore(store)) return result;
+    }
+    const error = new Error("The store changed repeatedly while saving. Please retry the request.");
+    error.statusCode = 503;
+    throw error;
   });
   storeMutationQueue = operation.then(() => undefined, () => undefined);
   return operation;
@@ -476,28 +643,54 @@ function readCookies(request) {
   );
 }
 
-function getSession(request) {
+async function getSession(request) {
   const token = readCookies(request).sf_session;
-  const session = token && sessions.get(token);
+  if (!token) return null;
+  if (!isSupabaseMode()) {
+    const session = localSessions.get(token);
+    if (!session) return null;
+    if (session.expiresAt < Date.now()) {
+      localSessions.delete(token);
+      return null;
+    }
+    return { token, ...session };
+  }
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const store = await readStore();
+  const session = store.sessions.find((entry) => entry.tokenHash === tokenHash);
   if (!session) return null;
   if (session.expiresAt < Date.now()) {
-    sessions.delete(token);
+    await updateStore((currentStore) => {
+      currentStore.sessions = currentStore.sessions.filter(
+        (entry) => entry.expiresAt >= Date.now(),
+      );
+    });
     return null;
   }
-  return { token, ...session };
+  return { token, user: session.user, expiresAt: session.expiresAt };
 }
 
-function setSession(response, user) {
+async function setSession(response, user) {
   const token = randomBytes(32).toString("base64url");
-  sessions.set(token, { user: safeUser(user), expiresAt: Date.now() + 8 * 60 * 60 * 1000 });
+  const session = { user: safeUser(user), expiresAt: Date.now() + 8 * 60 * 60 * 1000 };
+  if (isSupabaseMode()) {
+    const tokenHash = createHash("sha256").update(token).digest("hex");
+    await updateStore((store) => {
+      store.sessions = store.sessions.filter((entry) => entry.expiresAt >= Date.now());
+      store.sessions.push({ tokenHash, ...session });
+    });
+  } else {
+    localSessions.set(token, session);
+  }
+  const secure = process.env.VERCEL || process.env.NODE_ENV === "production" ? "; Secure" : "";
   response.setHeader(
     "Set-Cookie",
-    `sf_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`,
+    `sf_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${secure}`,
   );
 }
 
-function requireRole(request, response, role) {
-  const session = getSession(request);
+async function requireRole(request, response, role) {
+  const session = await getSession(request);
   if (!session) {
     sendError(response, 401, "Please sign in to continue.");
     return null;
@@ -580,7 +773,9 @@ function storefrontPaymentConfig(settings) {
 }
 
 function checkOrderLookupRateLimit(request) {
-  const address = request.socket.remoteAddress || "unknown";
+  const forwardedAddress = request.headers["x-forwarded-for"];
+  const address = (typeof forwardedAddress === "string" && forwardedAddress.split(",")[0].trim()) ||
+    request.socket?.remoteAddress || "unknown";
   const now = Date.now();
   const attempts = (lookupAttempts.get(address) || []).filter((time) => now - time < 60_000);
   if (attempts.length >= 12) return false;
@@ -612,7 +807,159 @@ function parseMenuPhoto(photo) {
   };
 }
 
+function storageObjectPath(folder, filename) {
+  return `${folder}/${filename}`;
+}
+
+function publicStorageUrl(bucket, objectPath) {
+  const encodedPath = objectPath.split("/").map(encodeURIComponent).join("/");
+  return `${SUPABASE_URL}/storage/v1/object/public/${bucket}/${encodedPath}`;
+}
+
+async function uploadStorageObject(bucket, objectPath, content, extension) {
+  const encodedPath = objectPath.split("/").map(encodeURIComponent).join("/");
+  const contentType = {
+    jpg: "image/jpeg",
+    png: "image/png",
+    webp: "image/webp",
+  }[extension];
+  const response = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${bucket}/${encodedPath}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": contentType,
+        "x-upsert": "false",
+      },
+      body: content,
+    },
+  );
+  if (!response.ok) {
+    const detail = await response.text();
+    const error = new Error(`Supabase Storage upload failed (${response.status}): ${detail}`);
+    error.statusCode = 502;
+    throw error;
+  }
+}
+
+async function deleteStorageObject(bucket, objectPath) {
+  const response = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${bucket}`,
+    {
+      method: "DELETE",
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ prefixes: [objectPath] }),
+    },
+  );
+  if (!response.ok && response.status !== 404) {
+    const detail = await response.text();
+    const error = new Error(`Supabase Storage delete failed (${response.status}): ${detail}`);
+    error.statusCode = 502;
+    throw error;
+  }
+}
+
+async function downloadStorageObject(bucket, objectPath) {
+  const encodedPath = objectPath.split("/").map(encodeURIComponent).join("/");
+  const response = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${bucket}/${encodedPath}`,
+    {
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    },
+  );
+  if (!response.ok) {
+    const detail = await response.text();
+    const error = new Error(`Supabase Storage download failed (${response.status}): ${detail}`);
+    error.statusCode = response.status === 404 ? 400 : 502;
+    throw error;
+  }
+  return Buffer.from(await response.arrayBuffer());
+}
+
+async function validateStoredImage(bucket, folder, objectPath) {
+  const match = typeof objectPath === "string" &&
+    objectPath.match(new RegExp(`^${folder}/([a-f0-9]{32}\\.(?:jpg|png|webp))$`));
+  if (!match) {
+    const error = new Error("The uploaded image reference is invalid.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const content = await downloadStorageObject(bucket, objectPath);
+  const extension = path.extname(match[1]).slice(1);
+  const dataUrl = `data:image/${extension === "jpg" ? "jpeg" : extension};base64,${content.toString("base64")}`;
+  const parsed = parseMenuPhoto(dataUrl);
+  if (typeof parsed === "string") {
+    const error = new Error(parsed);
+    error.statusCode = 400;
+    throw error;
+  }
+  return { filename: match[1], parsed };
+}
+
+async function createSignedUpload(kind, contentType, size) {
+  const settings = {
+    "menu-photo": { bucket: PUBLIC_BUCKET, folder: "menu-photos" },
+    "payment-qr": { bucket: PUBLIC_BUCKET, folder: "payment-assets" },
+    receipt: { bucket: PRIVATE_BUCKET, folder: "order-receipts" },
+  };
+  const config = settings[kind];
+  if (!config || !["image/jpeg", "image/png", "image/webp"].includes(contentType) ||
+    !Number.isInteger(size) || size < 1 || size > 5 * 1024 * 1024) {
+    const error = new Error("Choose a JPG, PNG or WebP image no larger than 5 MB.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[contentType];
+  const objectPath = storageObjectPath(config.folder, `${randomBytes(16).toString("hex")}.${extension}`);
+  const encodedPath = objectPath.split("/").map(encodeURIComponent).join("/");
+  const response = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/upload/sign/${config.bucket}/${encodedPath}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+    },
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(
+      `Could not create an image upload link (${response.status}): ${payload.message || payload.error || response.statusText}`,
+    );
+    error.statusCode = 502;
+    throw error;
+  }
+  const signedPath = payload.signedURL || payload.signedUrl || payload.url;
+  if (typeof signedPath !== "string") {
+    throw new Error("Supabase did not return a signed upload URL.");
+  }
+  const uploadUrl = /^https?:\/\//i.test(signedPath)
+    ? signedPath
+    : `${SUPABASE_URL}/storage/v1${signedPath.startsWith("/") ? signedPath : `/${signedPath}`}`;
+  return {
+    uploadUrl,
+    objectPath,
+    publicUrl: config.bucket === PUBLIC_BUCKET
+      ? publicStorageUrl(config.bucket, objectPath)
+      : null,
+  };
+}
+
 async function saveMenuPhoto(photo) {
+  if (isSupabaseMode() && typeof photo === "string" && !photo.startsWith("data:")) {
+    await validateStoredImage(PUBLIC_BUCKET, "menu-photos", photo);
+    return publicStorageUrl(PUBLIC_BUCKET, storageObjectPath("menu-photos", path.basename(photo)));
+  }
   const parsed = parseMenuPhoto(photo);
   if (typeof parsed === "string") {
     const error = new Error(parsed);
@@ -621,12 +968,23 @@ async function saveMenuPhoto(photo) {
   }
   if (!parsed) return null;
   const filename = `${randomBytes(16).toString("hex")}.${parsed.extension}`;
+  if (isSupabaseMode()) {
+    const objectPath = storageObjectPath("menu-photos", filename);
+    await uploadStorageObject(PUBLIC_BUCKET, objectPath, parsed.content, parsed.extension);
+    return publicStorageUrl(PUBLIC_BUCKET, objectPath);
+  }
   await fs.mkdir(MENU_PHOTO_DIR, { recursive: true });
   await fs.writeFile(path.join(MENU_PHOTO_DIR, filename), parsed.content, { flag: "wx" });
   return `/uploads/${filename}`;
 }
 
 async function saveImageDataUrl(dataUrl, directory) {
+  if (isSupabaseMode() && typeof dataUrl === "string" && !dataUrl.startsWith("data:")) {
+    const folder = path.basename(directory);
+    const bucket = folder === "order-receipts" ? PRIVATE_BUCKET : PUBLIC_BUCKET;
+    const { filename } = await validateStoredImage(bucket, folder, dataUrl);
+    return filename;
+  }
   const parsed = parseMenuPhoto(dataUrl);
   if (typeof parsed === "string") {
     const error = new Error(parsed);
@@ -635,12 +993,29 @@ async function saveImageDataUrl(dataUrl, directory) {
   }
   if (!parsed) return null;
   const filename = `${randomBytes(16).toString("hex")}.${parsed.extension}`;
+  if (isSupabaseMode()) {
+    const folder = path.basename(directory);
+    const bucket = folder === "order-receipts" ? PRIVATE_BUCKET : PUBLIC_BUCKET;
+    await uploadStorageObject(bucket, storageObjectPath(folder, filename), parsed.content, parsed.extension);
+    return filename;
+  }
   await fs.mkdir(directory, { recursive: true });
   await fs.writeFile(path.join(directory, filename), parsed.content, { flag: "wx" });
   return filename;
 }
 
 async function removeImageAsset(directory, filename) {
+  if (isSupabaseMode()) {
+    const folder = path.basename(directory);
+    const bucket = folder === "order-receipts" ? PRIVATE_BUCKET : PUBLIC_BUCKET;
+    const publicPrefix = `${SUPABASE_URL}/storage/v1/object/public/${PUBLIC_BUCKET}/${folder}/`;
+    const objectName = typeof filename === "string" && filename.startsWith(publicPrefix)
+      ? decodeURIComponent(filename.slice(publicPrefix.length))
+      : filename;
+    if (typeof objectName !== "string" || !/^[a-f0-9]{32}\.(?:jpg|png|webp)$/.test(objectName)) return;
+    await deleteStorageObject(bucket, storageObjectPath(folder, objectName));
+    return;
+  }
   if (typeof filename !== "string" || !/^[a-f0-9]{32}\.(?:jpg|png|webp)$/.test(filename)) return;
   try {
     await fs.unlink(path.join(directory, filename));
@@ -650,6 +1025,14 @@ async function removeImageAsset(directory, filename) {
 }
 
 async function removeMenuPhoto(photoUrl) {
+  if (isSupabaseMode()) {
+    const prefix = `${SUPABASE_URL}/storage/v1/object/public/${PUBLIC_BUCKET}/menu-photos/`;
+    if (typeof photoUrl !== "string" || !photoUrl.startsWith(prefix)) return;
+    const filename = decodeURIComponent(photoUrl.slice(prefix.length));
+    if (!/^[a-f0-9]{32}\.(?:jpg|png|webp)$/.test(filename)) return;
+    await deleteStorageObject(PUBLIC_BUCKET, storageObjectPath("menu-photos", filename));
+    return;
+  }
   const match = typeof photoUrl === "string" &&
     photoUrl.match(/^\/uploads\/([a-f0-9]{32}\.(?:jpg|png|webp))$/);
   if (!match) return;
@@ -686,7 +1069,9 @@ function validateMenuItem(body) {
     return "Choose whether to remove the current photo.";
   }
   if (body.removePhoto && body.photo) return "Choose a new photo or remove the current one, not both.";
-  const photoError = parseMenuPhoto(body.photo);
+  const isStoredPhoto = isSupabaseMode() && typeof body.photo === "string" &&
+    /^menu-photos\/[a-f0-9]{32}\.(?:jpg|png|webp)$/.test(body.photo);
+  const photoError = isStoredPhoto ? null : parseMenuPhoto(body.photo);
   if (typeof photoError === "string") return photoError;
   return null;
 }
@@ -742,6 +1127,41 @@ async function serveStatic(pathname, response) {
 }
 
 async function serveProtectedImage(filename, directory, response) {
+  if (isSupabaseMode()) {
+    const folder = path.basename(directory);
+    const objectPath = storageObjectPath(folder, filename);
+    const encodedPath = objectPath.split("/").map(encodeURIComponent).join("/");
+    const bucket = folder === "order-receipts" ? PRIVATE_BUCKET : PUBLIC_BUCKET;
+    const result = await fetch(
+      `${SUPABASE_URL}/storage/v1/object/${bucket}/${encodedPath}`,
+      {
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+      },
+    );
+    if (result.status === 404) {
+      const error = new Error("Stored image not found.");
+      error.code = "ENOENT";
+      throw error;
+    }
+    if (!result.ok) {
+      const detail = await result.text();
+      const error = new Error(`Supabase Storage download failed (${result.status}): ${detail}`);
+      error.statusCode = 502;
+      throw error;
+    }
+    const content = Buffer.from(await result.arrayBuffer());
+    const type = mimeType(filename);
+    response.writeHead(200, {
+      "Content-Type": type || "application/octet-stream",
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(content);
+    return;
+  }
   const filePath = path.join(directory, filename);
   const content = await fs.readFile(filePath);
   const type = mimeType(filePath);
@@ -767,8 +1187,25 @@ async function handleRequest(request, response) {
   }
 
   if (request.method === "GET" && pathname === "/api/session") {
-    const session = getSession(request);
+    const session = await getSession(request);
     jsonResponse(response, 200, { user: session ? session.user : null });
+    return;
+  }
+
+  if (request.method === "POST" && pathname === "/api/uploads/sign") {
+    const body = await readJson(request);
+    if (!isSupabaseMode()) {
+      jsonResponse(response, 200, { directUploads: false });
+      return;
+    }
+    if (body.kind === "menu-photo" || body.kind === "payment-qr") {
+      if (!(await requireRole(request, response, "admin"))) return;
+    } else if (body.kind === "receipt" && !checkOrderLookupRateLimit(request)) {
+      sendError(response, 429, "Too many upload attempts. Please wait and try again.");
+      return;
+    }
+    const upload = await createSignedUpload(body.kind, body.contentType, body.size);
+    jsonResponse(response, 200, { directUploads: true, ...upload });
     return;
   }
 
@@ -797,14 +1234,14 @@ async function handleRequest(request, response) {
   }
 
   if (request.method === "GET" && pathname === "/api/admin/settings/gcash") {
-    if (!requireRole(request, response, "admin")) return;
+    if (!(await requireRole(request, response, "admin"))) return;
     const store = await readStore();
     jsonResponse(response, 200, storefrontPaymentConfig(store.settings));
     return;
   }
 
   if (request.method === "PUT" && pathname === "/api/admin/settings/gcash") {
-    if (!requireRole(request, response, "admin")) return;
+    if (!(await requireRole(request, response, "admin"))) return;
     const body = await readJson(request);
     if (!validText(body.merchantName, 80)) {
       sendError(response, 400, "Enter a merchant name (up to 80 characters).");
@@ -827,7 +1264,11 @@ async function handleRequest(request, response) {
         previousQrUrl = store.settings.gcash_qr_url || "";
         store.settings.gcash_merchant_name = body.merchantName.trim();
         store.settings.gcash_merchant_number = body.merchantNumber.trim();
-        if (qrFilename) store.settings.gcash_qr_url = `/payment-assets/${qrFilename}`;
+        if (qrFilename) {
+          store.settings.gcash_qr_url = isSupabaseMode()
+            ? publicStorageUrl(PUBLIC_BUCKET, storageObjectPath("payment-assets", qrFilename))
+            : `/payment-assets/${qrFilename}`;
+        }
         return { config: storefrontPaymentConfig(store.settings) };
       });
     } catch (error) {
@@ -835,7 +1276,9 @@ async function handleRequest(request, response) {
       throw error;
     }
     if (qrFilename && previousQrUrl !== result.config.qrImageUrl) {
-      const previousFilename = previousQrUrl.match(/^\/payment-assets\/([a-f0-9]{32}\.(?:jpg|png|webp))$/)?.[1];
+      const previousFilename = isSupabaseMode()
+        ? previousQrUrl
+        : previousQrUrl.match(/^\/payment-assets\/([a-f0-9]{32}\.(?:jpg|png|webp))$/)?.[1];
       await removeImageAsset(PAYMENT_ASSET_DIR, previousFilename);
     }
     jsonResponse(response, 200, result.config);
@@ -879,7 +1322,7 @@ async function handleRequest(request, response) {
       sendError(response, result.statusCode, result.error);
       return;
     }
-    setSession(response, result.user);
+    await setSession(response, result.user);
     jsonResponse(response, 201, { user: safeUser(result.user) });
     return;
   }
@@ -899,7 +1342,7 @@ async function handleRequest(request, response) {
         return;
       }
       const admin = { id: "admin", name: "Suarez Farms Admin", role: "admin" };
-      setSession(response, admin);
+      await setSession(response, admin);
       jsonResponse(response, 200, { user: safeUser(admin) });
       return;
     }
@@ -918,35 +1361,44 @@ async function handleRequest(request, response) {
       sendError(response, 401, "Incorrect email or password.");
       return;
     }
-    setSession(response, user);
+    await setSession(response, user);
     jsonResponse(response, 200, { user: safeUser(user) });
     return;
   }
 
   if (request.method === "POST" && pathname === "/api/auth/logout") {
-    const session = getSession(request);
-    if (session) sessions.delete(session.token);
+    const session = await getSession(request);
+    if (session) {
+      if (isSupabaseMode()) {
+        const tokenHash = createHash("sha256").update(session.token).digest("hex");
+        await updateStore((store) => {
+          store.sessions = store.sessions.filter((entry) => entry.tokenHash !== tokenHash);
+        });
+      } else {
+        localSessions.delete(session.token);
+      }
+    }
     response.setHeader("Set-Cookie", "sf_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
     jsonResponse(response, 200, { ok: true });
     return;
   }
 
   if (request.method === "GET" && pathname === "/api/admin/menu") {
-    if (!requireRole(request, response, "admin")) return;
+    if (!(await requireRole(request, response, "admin"))) return;
     const store = await readStore();
     jsonResponse(response, 200, { menu: store.menu.map(publicMenuItem) });
     return;
   }
 
   if (request.method === "GET" && pathname === "/api/admin/categories") {
-    if (!requireRole(request, response, "admin")) return;
+    if (!(await requireRole(request, response, "admin"))) return;
     const store = await readStore();
     jsonResponse(response, 200, { categories: store.categories });
     return;
   }
 
   if (request.method === "POST" && pathname === "/api/admin/categories") {
-    if (!requireRole(request, response, "admin")) return;
+    if (!(await requireRole(request, response, "admin"))) return;
     const body = await readJson(request);
     if (!validText(body.name, 40)) {
       sendError(response, 400, "Enter a category name (up to 40 characters).");
@@ -966,7 +1418,7 @@ async function handleRequest(request, response) {
   }
 
   if (request.method === "POST" && pathname === "/api/admin/menu") {
-    if (!requireRole(request, response, "admin")) return;
+    if (!(await requireRole(request, response, "admin"))) return;
     const body = await readJson(request);
     const error = validateMenuItem(body);
     if (error || body.removePhoto) {
@@ -1012,7 +1464,7 @@ async function handleRequest(request, response) {
 
   const menuItemMatch = pathname.match(/^\/api\/admin\/menu\/([a-f0-9]{24})$/);
   if (menuItemMatch && request.method === "PUT") {
-    if (!requireRole(request, response, "admin")) return;
+    if (!(await requireRole(request, response, "admin"))) return;
     const body = await readJson(request);
     const error = validateMenuItem(body);
     if (error) {
@@ -1061,7 +1513,7 @@ async function handleRequest(request, response) {
   }
 
   if (menuItemMatch && request.method === "DELETE") {
-    if (!requireRole(request, response, "admin")) return;
+    if (!(await requireRole(request, response, "admin"))) return;
     const result = await updateStore((store) => {
       const index = store.menu.findIndex((item) => item.id === menuItemMatch[1]);
       if (index < 0) return { error: "Menu item not found.", statusCode: 404 };
@@ -1078,7 +1530,7 @@ async function handleRequest(request, response) {
   }
 
   if (request.method === "GET" && pathname === "/api/orders/mine") {
-    const customer = requireRole(request, response, "customer");
+    const customer = await requireRole(request, response, "customer");
     if (!customer) return;
     const store = await readStore();
     const orders = store.orders
@@ -1116,7 +1568,7 @@ async function handleRequest(request, response) {
       sendError(response, 404, "Receipt image not found.");
       return;
     }
-    const session = getSession(request);
+    const session = await getSession(request);
     const reference = url.searchParams.get("reference") || "";
     const isOwner = session?.user.role === "customer" && session.user.id === order.customerId;
     const isAdmin = session?.user.role === "admin";
@@ -1138,7 +1590,7 @@ async function handleRequest(request, response) {
   }
 
   if (request.method === "POST" && pathname === "/api/orders") {
-    const session = getSession(request);
+    const session = await getSession(request);
     if (session?.user.role === "admin") {
       sendError(response, 403, "Sign out of the admin account before placing a customer order.");
       return;
@@ -1278,7 +1730,7 @@ async function handleRequest(request, response) {
   }
 
   if (request.method === "GET" && pathname === "/api/admin/dashboard") {
-    if (!requireRole(request, response, "admin")) return;
+    if (!(await requireRole(request, response, "admin"))) return;
     const store = await readStore();
     const shopDate = (value) => {
       const parts = new Intl.DateTimeFormat("en-CA", {
@@ -1315,7 +1767,7 @@ async function handleRequest(request, response) {
   }
 
   if (request.method === "GET" && pathname === "/api/admin/orders") {
-    if (!requireRole(request, response, "admin")) return;
+    if (!(await requireRole(request, response, "admin"))) return;
     const store = await readStore();
     const search = (url.searchParams.get("q") || "").trim().toLocaleLowerCase();
     const status = url.searchParams.get("status") || "";
@@ -1344,7 +1796,7 @@ async function handleRequest(request, response) {
 
   const adminReceiptMatch = pathname.match(/^\/api\/admin\/orders\/([A-F0-9]{16})\/receipt$/);
   if (request.method === "GET" && adminReceiptMatch) {
-    if (!requireRole(request, response, "admin")) return;
+    if (!(await requireRole(request, response, "admin"))) return;
     const store = await readStore();
     const order = store.orders.find((candidate) => candidate.id === adminReceiptMatch[1]);
     if (!order || !order.receiptPath) {
@@ -1365,7 +1817,7 @@ async function handleRequest(request, response) {
 
   const orderMatch = pathname.match(/^\/api\/admin\/orders\/([A-F0-9]{16})$/);
   if (orderMatch && request.method === "PATCH") {
-    if (!requireRole(request, response, "admin")) return;
+    if (!(await requireRole(request, response, "admin"))) return;
     const body = await readJson(request);
     const validStatuses = ["pending_verification", "received", "preparing", "ready", "completed", "cancelled"];
     if (body.status !== undefined && !validStatuses.includes(body.status)) {
@@ -1405,21 +1857,6 @@ async function handleRequest(request, response) {
 
   sendError(response, 404, "API endpoint not found.");
 }
-
-const server = http.createServer((request, response) => {
-  handleRequest(request, response).catch((error) => {
-    if (response.headersSent) {
-      response.destroy(error);
-      return;
-    }
-    if (error.statusCode) {
-      sendError(response, error.statusCode, error.message);
-      return;
-    }
-    console.error("Request failed:", error);
-    sendError(response, 500, "An unexpected server error occurred.");
-  });
-});
 
 function groupCatalogItem(item) {
   const originalCategory = item.category || "Other";
@@ -1512,47 +1949,49 @@ async function initializeMenuCatalog() {
     if (!Array.isArray(catalog.items)) {
       throw new Error("The default menu catalog has an invalid structure.");
     }
-    for (const item of store.menu) {
-      Object.assign(item, groupCatalogItem(item));
-      item.photoAltText ||= item.name;
-    }
-    const catalogKey = (item, category = item.category) => JSON.stringify([
-      category.trim().toLowerCase(),
-      item.name.trim().toLowerCase(),
-      (item.description || "").trim().toLowerCase(),
-      Number(item.price),
-    ]);
-    const duplicateIds = new Set();
-    for (const item of catalog.items) {
-      const groups = groupCatalogItem(item);
-      const matches = store.menu.filter((existing) =>
-        catalogKey(existing) === catalogKey(item, groups.category),
-      );
-      if (matches.length) {
-        const keep = matches.find((existing) => existing.photoUrl) || matches[0];
-        Object.assign(keep, groups);
-        keep.photoAltText ||= keep.name;
-        for (const duplicate of matches) {
-          if (duplicate !== keep) duplicateIds.add(duplicate.id);
-        }
-        continue;
+    await updateStore((currentStore) => {
+      if (currentStore.menuCatalogVersion >= 9) return;
+      for (const item of currentStore.menu) {
+        Object.assign(item, groupCatalogItem(item));
+        item.photoAltText ||= item.name;
       }
-      store.menu.push({
-        id: randomBytes(12).toString("hex"),
-        name: item.name,
-        ...groups,
-        description: item.description || "",
-        price: item.price,
-        available: true,
-        photoAltText: item.name,
-      });
-    }
-    store.menu = store.menu.filter((item) => !duplicateIds.has(item.id));
-    store.categories = store.categories.filter((category) =>
-      !["Coffee, Tea & Matcha", "Sisig Rice Meals", "Rice Meal Specials"].includes(category),
-    );
-    store.menuCatalogVersion = 9;
-    await writeStore(store);
+      const catalogKey = (item, category = item.category) => JSON.stringify([
+        category.trim().toLowerCase(),
+        item.name.trim().toLowerCase(),
+        (item.description || "").trim().toLowerCase(),
+        Number(item.price),
+      ]);
+      const duplicateIds = new Set();
+      for (const item of catalog.items) {
+        const groups = groupCatalogItem(item);
+        const matches = currentStore.menu.filter((existing) =>
+          catalogKey(existing) === catalogKey(item, groups.category),
+        );
+        if (matches.length) {
+          const keep = matches.find((existing) => existing.photoUrl) || matches[0];
+          Object.assign(keep, groups);
+          keep.photoAltText ||= keep.name;
+          for (const duplicate of matches) {
+            if (duplicate !== keep) duplicateIds.add(duplicate.id);
+          }
+          continue;
+        }
+        currentStore.menu.push({
+          id: randomBytes(12).toString("hex"),
+          name: item.name,
+          ...groups,
+          description: item.description || "",
+          price: item.price,
+          available: true,
+          photoAltText: item.name,
+        });
+      }
+      currentStore.menu = currentStore.menu.filter((item) => !duplicateIds.has(item.id));
+      currentStore.categories = currentStore.categories.filter((category) =>
+        !["Coffee, Tea & Matcha", "Sisig Rice Meals", "Rice Meal Specials"].includes(category),
+      );
+      currentStore.menuCatalogVersion = 9;
+    });
   }
 
   const currentStore = await readStore();
@@ -1588,16 +2027,53 @@ async function initializeMenuCatalog() {
       receiptPath: null,
       verifiedAt: null,
     }));
-    currentStore.orders.unshift(...demoOrders);
-    await writeStore(currentStore);
+    await updateStore((latestStore) => {
+      if (latestStore.orders.length === 0) latestStore.orders.unshift(...demoOrders);
+    });
   }
 }
 
-initializeMenuCatalog().then(() => {
-  server.listen(PORT, "127.0.0.1", () => {
-    console.log(`Suarez Farms ordering system is available at http://127.0.0.1:${PORT}`);
+let initializationPromise;
+
+async function ensureInitialized() {
+  if (!initializationPromise) {
+    initializationPromise = initializeMenuCatalog();
+  }
+  try {
+    await initializationPromise;
+  } catch (error) {
+    initializationPromise = null;
+    throw error;
+  }
+}
+
+async function requestHandler(request, response) {
+  try {
+    await ensureInitialized();
+    await handleRequest(request, response);
+  } catch (error) {
+    if (response.headersSent) {
+      response.destroy(error);
+      return;
+    }
+    console.error("Request failed:", error);
+    if (error.statusCode) {
+      sendError(response, error.statusCode, error.message);
+      return;
+    }
+    sendError(response, 500, "An unexpected server error occurred.");
+  }
+}
+
+if (require.main === module) {
+  ensureInitialized().then(() => {
+    http.createServer(requestHandler).listen(PORT, "127.0.0.1", () => {
+      console.log(`Suarez Farms ordering system is available at http://127.0.0.1:${PORT}`);
+    });
+  }).catch((error) => {
+    console.error("Could not initialize the menu catalog:", error);
+    process.exitCode = 1;
   });
-}).catch((error) => {
-  console.error("Could not initialize the menu catalog:", error);
-  process.exitCode = 1;
-});
+} else {
+  module.exports = requestHandler;
+}

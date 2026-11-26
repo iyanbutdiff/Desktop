@@ -3,7 +3,7 @@
 ## Run locally
 
 1. Install Node.js 22.5 or later.
-2. Copy `.env.example` to `.env` and set a strong `ADMIN_PASSWORD`.
+2. Copy `.env.example` to `.env` and set a strong `ADMIN_PASSWORD`. To use Supabase locally, also set its URL and service-role key; without those variables, local development uses SQLite.
 3. Run `npm start` and open `http://127.0.0.1:3000`.
 
 The initial admin username is `adminsuarez`. The local `.env` file is ignored by Git. Do not publish the supplied development password or expose this local-only server to the public internet.
@@ -16,4 +16,20 @@ Customers can order as guests or register/sign in to attach orders to an account
 
 Customers can look up guest orders using the GCash reference number, and account holders can browse order history and reorder. Admins can review payment references and optional receipt uploads, verify and prepare, reject/cancel, update order status, search/filter orders, view summary KPIs, and manage menu availability and prices. The admin dashboard refreshes incoming orders automatically while open.
 
-The server stores users, categories, menu items, add-ons, settings, and orders in a local SQLite database at `data/store.sqlite`. On first startup, existing records in `data/store.json` are imported automatically. Uploaded menu photos, payment QR codes, and receipt images are kept under the data directory, and browser sessions are kept in memory. This setup is intended for local demonstration, not a public production deployment. A public service needs HTTPS, persistent sessions, and a configured payment provider.
+## Deploy to Vercel with Supabase
+
+The Vercel deployment uses Supabase instead of local SQLite. The app persists its store state in the `suarez_farms_state` table, uploads menu photos and the GCash QR image to the public `suarez-farms-public` bucket, and keeps payment receipts in the private `suarez-farms-private` bucket. Customer and admin sessions are stored as hashed tokens in Supabase so they continue working across serverless invocations.
+
+1. Create a Supabase project.
+2. In the Supabase **SQL Editor**, run the contents of `supabase-schema.sql`.
+3. In the Vercel project settings, set **Root Directory** to `suarez-farms-info-system` and the production branch to `master`.
+4. Add these Vercel **Environment Variables** for Production:
+   - `SUPABASE_URL`: the project URL from Supabase **Project Settings → API**.
+   - `SUPABASE_SERVICE_ROLE_KEY`: the service-role key from that page. Keep it server-only; never add it to browser code or commit it.
+   - `ADMIN_PASSWORD`: a new, strong admin password.
+   - Optionally set `ADMIN_USERNAME` (defaults to `adminsuarez`), `GCASH_MERCHANT_NAME`, and `GCASH_MERCHANT_NUMBER`.
+5. Redeploy the project. On first request, the app initializes the menu catalog and default add-ons in Supabase.
+
+The initial catalog includes two demonstration orders on a fresh Supabase store. Review and remove those before accepting real orders. Configure the shop's GCash number and QR code in the admin dashboard before checkout.
+
+For local development without Supabase variables, the existing SQLite-backed local mode remains available. Image uploads in Supabase mode use short-lived signed URLs so 5 MB images do not exceed Vercel's function request-body limit. Do not rely on local files or SQLite for Vercel production data.
