@@ -1947,7 +1947,7 @@ app.post("/api/auth/login", (req, res) => {
   return res.status(400).json({ message: "Unsupported login role" });
 });
 
-const PORT = process.env.PORT || 3000;
+
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
