@@ -1926,32 +1926,3 @@ if (require.main === module) {
 } else {
   module.exports = requestHandler;
 }
-app.use(express.json());
-
-app.post("/api/auth/login", (req, res) => {
-  const { role, username, password } = req.body || {};
-
-  if (role === "admin") {
-    if (
-      username === process.env.ADMIN_USERNAME &&
-      password === process.env.ADMIN_PASSWORD
-    ) {
-      return res.json({
-        success: true,
-        user: { name: "Admin", role: "admin", username },
-      });
-    }
-    return res.status(401).json({ message: "Invalid admin credentials" });
-  }
-
-  return res.status(400).json({ message: "Unsupported login role" });
-});
-
-
-if (require.main === module) {
-  app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-}
-
-module.exports = app;
